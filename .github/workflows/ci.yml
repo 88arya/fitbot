@@ -37,7 +37,7 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./cmd/spotter
-      - uses: sqlc-dev/setup-sqlc@v4
+      - uses: sqlc-dev/setup-sqlc@v5
         with:
           sqlc-version: "1.29.0"
       - name: sqlc output is up to date
