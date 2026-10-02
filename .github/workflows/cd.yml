@@ -1,0 +1,118 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: ref
+        run: echo "ref=${IMAGE}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: image
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Deploy through SSM
+        env:
+          INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+          ENV_PARAM: ${{ vars.ENV_PARAM }}
+          SPOTTER_IMAGE: ${{ needs.image.outputs.ref }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          b64() { base64 -w0 "$1"; }
+          params=$(jq -n \
+            --arg compose "$(b64 deploy/compose.yml)" \
+            --arg caddy "$(b64 deploy/Caddyfile)" \
+            --arg deploy "$(b64 deploy/deploy.sh)" \
+            --arg token "$GHCR_TOKEN" --arg actor "$GITHUB_ACTOR" \
+            --arg image "$SPOTTER_IMAGE" --arg param "$ENV_PARAM" --arg region "$AWS_REGION" \
+            '{commands: [
+              "set -euo pipefail",
+              "cd /opt/spotter",
+              "echo \($compose) | base64 -d > compose.yml",
+              "echo \($caddy) | base64 -d > Caddyfile",
+              "echo \($deploy) | base64 -d > deploy.sh",
+              "echo \($token) | docker login ghcr.io -u \($actor) --password-stdin",
+              "trap \"docker logout ghcr.io\" EXIT",
+              "SPOTTER_IMAGE=\($image) ENV_PARAM=\($param) AWS_REGION=\($region) bash deploy.sh"
+            ], executionTimeout: ["600"]}')
+
+          id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript --comment "deploy $GITHUB_SHA" \
+            --parameters "$params" --query Command.CommandId --output text)
+          echo "SSM command $id"
+
+          status=Pending
+          for _ in $(seq 1 120); do
+            sleep 5
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in Pending|InProgress|Delayed) continue ;; *) break ;; esac
+          done
+
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text || true
+          echo "status: $status"
+          [ "$status" = Success ]
