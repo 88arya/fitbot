@@ -1,0 +1,8 @@
+{$DOMAIN} {
+	encode
+
+	@internal path /metrics /readyz
+	respond @internal 404
+
+	reverse_proxy app:8080
+}
