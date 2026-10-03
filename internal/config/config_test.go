@@ -20,7 +20,7 @@ func TestFromEnvDefaults(t *testing.T) {
 	if c.DefaultTimezone.String() != "America/Toronto" {
 		t.Errorf("DefaultTimezone = %q", c.DefaultTimezone)
 	}
-	if c.SMSProvider != "" || c.LLMProvider != "" {
+	if c.Telnyx.APIKey != "" || c.OpenAI.APIKey != "" {
 		t.Errorf("providers should default to disabled")
 	}
 }
@@ -34,9 +34,8 @@ func TestFromEnvErrors(t *testing.T) {
 		{"missing database", map[string]string{}, "DATABASE_URL is required"},
 		{"bad timezone", map[string]string{"DATABASE_URL": "x", "DEFAULT_TIMEZONE": "Mars/Base"}, "DEFAULT_TIMEZONE"},
 		{"bad sender", map[string]string{"DATABASE_URL": "x", "ALLOWED_SENDERS": "4165551234"}, "not E.164"},
-		{"unknown sms", map[string]string{"DATABASE_URL": "x", "SMS_PROVIDER": "pigeon"}, "unknown provider"},
-		{"twilio missing creds", map[string]string{"DATABASE_URL": "x", "SMS_PROVIDER": "twilio"}, "TWILIO_AUTH_TOKEN is required"},
-		{"openai missing model", map[string]string{"DATABASE_URL": "x", "LLM_PROVIDER": "openai", "OPENAI_BASE_URL": "http://localhost:11434/v1"}, "OPENAI_MODEL is required"},
+		{"telnyx missing public key", map[string]string{"DATABASE_URL": "x", "TELNYX_API_KEY": "k"}, "TELNYX_PUBLIC_KEY is required"},
+		{"openai missing model", map[string]string{"DATABASE_URL": "x", "OPENAI_API_KEY": "k"}, "OPENAI_MODEL is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

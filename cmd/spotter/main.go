@@ -48,11 +48,11 @@ func run() error {
 		return err
 	}
 
-	if cfg.SMSProvider == "" {
-		slog.Warn("SMS_PROVIDER not set; texting is disabled")
+	if cfg.Telnyx.APIKey == "" {
+		slog.Warn("TELNYX_API_KEY not set; texting is disabled")
 	}
-	if cfg.LLMProvider == "" {
-		slog.Warn("LLM_PROVIDER not set; only fast-path replies will work")
+	if cfg.OpenAI.APIKey == "" {
+		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
 	}
 
 	srv := &http.Server{

@@ -22,30 +22,14 @@ type Config struct {
 	DefaultTimezone *time.Location
 	AllowedSenders  []string
 
-	SMSProvider string
-	Twilio      TwilioConfig
-	Telnyx      TelnyxConfig
-
-	LLMProvider string
-	Anthropic   AnthropicConfig
-	OpenAI      OpenAIConfig
-}
-
-type TwilioConfig struct {
-	AccountSID string
-	AuthToken  string
-	FromNumber string
+	Telnyx TelnyxConfig
+	OpenAI OpenAIConfig
 }
 
 type TelnyxConfig struct {
 	APIKey     string
 	PublicKey  string
 	FromNumber string
-}
-
-type AnthropicConfig struct {
-	APIKey string
-	Model  string
 }
 
 type OpenAIConfig struct {
@@ -84,8 +68,6 @@ func FromEnv(get func(string) string) (*Config, error) {
 		HTTPAddr:      env("HTTP_ADDR", ":8080"),
 		PublicBaseURL: env("PUBLIC_BASE_URL", ""),
 		DatabaseURL:   require("DATABASE_URL"),
-		SMSProvider:   strings.ToLower(env("SMS_PROVIDER", "")),
-		LLMProvider:   strings.ToLower(env("LLM_PROVIDER", "")),
 	}
 
 	if err := c.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
@@ -108,51 +90,25 @@ func FromEnv(get func(string) string) (*Config, error) {
 		c.AllowedSenders = append(c.AllowedSenders, s)
 	}
 
-	switch c.SMSProvider {
-	case "":
-	case "twilio":
-		c.Twilio = TwilioConfig{
-			AccountSID: require("TWILIO_ACCOUNT_SID"),
-			AuthToken:  require("TWILIO_AUTH_TOKEN"),
-			FromNumber: require("TWILIO_FROM_NUMBER"),
-		}
-		errs = append(errs, requirePublicURL(c)...)
-	case "telnyx":
+	// Telnyx and OpenAI are enabled by setting their API keys.
+	if key := env("TELNYX_API_KEY", ""); key != "" {
 		c.Telnyx = TelnyxConfig{
-			APIKey:     require("TELNYX_API_KEY"),
+			APIKey:     key,
 			PublicKey:  require("TELNYX_PUBLIC_KEY"),
 			FromNumber: require("TELNYX_FROM_NUMBER"),
 		}
-	default:
-		errs = append(errs, fmt.Errorf("SMS_PROVIDER: unknown provider %q (want twilio or telnyx)", c.SMSProvider))
 	}
 
-	switch c.LLMProvider {
-	case "":
-	case "anthropic":
-		c.Anthropic = AnthropicConfig{
-			APIKey: require("ANTHROPIC_API_KEY"),
-			Model:  env("ANTHROPIC_MODEL", "claude-haiku-4-5"),
-		}
-	case "openai":
+	if key := env("OPENAI_API_KEY", ""); key != "" {
 		c.OpenAI = OpenAIConfig{
-			BaseURL: require("OPENAI_BASE_URL"),
-			APIKey:  env("OPENAI_API_KEY", ""),
+			BaseURL: env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+			APIKey:  key,
 			Model:   require("OPENAI_MODEL"),
 		}
-	default:
-		errs = append(errs, fmt.Errorf("LLM_PROVIDER: unknown provider %q (want anthropic or openai)", c.LLMProvider))
 	}
 
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("invalid config:\n%w", err)
 	}
 	return c, nil
-}
-
-func requirePublicURL(c *Config) []error {
-	if c.PublicBaseURL == "" {
-		return []error{errors.New("PUBLIC_BASE_URL is required for twilio webhook signature checks")}
-	}
-	return nil
 }

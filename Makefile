@@ -1,4 +1,4 @@
-.PHONY: run build test lint generate db-up up down tf-plan tf-apply
+.PHONY: run build test lint generate db-up up down tunnel tf-plan tf-apply
 
 run:
 	go run ./cmd/spotter
@@ -24,6 +24,9 @@ up:
 
 down:
 	docker compose down
+
+tunnel:
+	./scripts/tunnel.sh
 
 tf-plan:
 	cd infra/terraform && terraform init -input=false && terraform plan
