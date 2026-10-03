@@ -13,7 +13,9 @@ import (
 
 	"github.com/88arya/spotter/internal/config"
 	"github.com/88arya/spotter/internal/db"
+	"github.com/88arya/spotter/internal/llm"
 	"github.com/88arya/spotter/internal/server"
+	"github.com/88arya/spotter/internal/telnyx"
 )
 
 var version = "dev"
@@ -48,16 +50,25 @@ func run() error {
 		return err
 	}
 
+	var sms *server.SMS
 	if cfg.Telnyx.APIKey == "" {
 		slog.Warn("TELNYX_API_KEY not set; texting is disabled")
+	} else {
+		tc, err := telnyx.New(cfg.Telnyx.APIKey, cfg.Telnyx.PublicKey, cfg.Telnyx.FromNumber)
+		if err != nil {
+			return err
+		}
+		sms = &server.SMS{Telnyx: tc, AllowedSenders: cfg.AllowedSenders}
 	}
 	if cfg.OpenAI.APIKey == "" {
 		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
+	} else if sms != nil {
+		sms.LLM = llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model)
 	}
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           server.New(pool),
+		Handler:           server.New(pool, sms),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -11,7 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-func New(pool *pgxpool.Pool) http.Handler {
+// New builds the router. A nil sms leaves the Telnyx webhook unregistered.
+func New(pool *pgxpool.Pool, sms *SMS) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer)
 
@@ -28,6 +29,9 @@ func New(pool *pgxpool.Pool) http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 	r.Handle("/metrics", promhttp.Handler())
+	if sms != nil {
+		r.Post("/webhooks/telnyx", sms.handleTelnyx)
+	}
 
 	return r
 }
