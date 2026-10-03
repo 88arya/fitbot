@@ -15,12 +15,14 @@ import (
 	"time"
 )
 
-const apiURL = "https://api.telnyx.com/v2"
+const defaultAPIURL = "https://api.telnyx.com/v2"
 
 // maxSkew is how old a webhook timestamp may be before it is rejected as a replay.
 const maxSkew = 5 * time.Minute
 
 type Client struct {
+	// APIURL is the Telnyx API base URL. Tests point it at a fake server.
+	APIURL string
 	apiKey string
 	from   string
 	pubKey ed25519.PublicKey
@@ -33,6 +35,7 @@ func New(apiKey, publicKey, from string) (*Client, error) {
 		return nil, errors.New("TELNYX_PUBLIC_KEY must be a base64 Ed25519 public key")
 	}
 	return &Client{
+		APIURL: defaultAPIURL,
 		apiKey: apiKey,
 		from:   from,
 		pubKey: key,
@@ -40,29 +43,38 @@ func New(apiKey, publicKey, from string) (*Client, error) {
 	}, nil
 }
 
-// Send texts body to the E.164 number to.
-func (c *Client) Send(ctx context.Context, to, body string) error {
+// Send texts body to the E.164 number to and returns Telnyx's message ID.
+func (c *Client) Send(ctx context.Context, to, body string) (string, error) {
 	payload, err := json.Marshal(map[string]string{"from": c.from, "to": to, "text": body})
 	if err != nil {
-		return err
+		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/messages", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.APIURL+"/messages", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("telnyx send: %s: %s", resp.Status, msg)
+		return "", fmt.Errorf("telnyx send: %s: %s", resp.Status, msg)
 	}
-	return nil
+
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("telnyx send: decoding response: %w", err)
+	}
+	return out.Data.ID, nil
 }
 
 // Verify checks a webhook's Ed25519 signature over "timestamp|body".
@@ -85,34 +97,65 @@ func (c *Client) Verify(h http.Header, body []byte, now time.Time) error {
 	return nil
 }
 
-// Inbound is an inbound text parsed from a message.received webhook.
-type Inbound struct {
+// Event types Spotter handles. Telnyx sends message.sent and
+// message.finalized as delivery reports for outbound texts.
+const (
+	EventReceived  = "message.received"
+	EventSent      = "message.sent"
+	EventFinalized = "message.finalized"
+)
+
+// Event is the part of a messaging webhook Spotter uses.
+type Event struct {
+	Type string
+	// ID is Telnyx's message ID.
 	ID   string
 	From string
 	Text string
+	// Status is the recipient's delivery status, like "delivered".
+	Status string
+	Parts  int
+	// Cost is what Telnyx charged in USD, or "" when not reported yet.
+	Cost string
 }
 
-// ParseInbound returns the inbound text in a webhook body, or ok=false for
-// any other event type.
-func ParseInbound(body []byte) (in Inbound, ok bool, err error) {
+func ParseEvent(body []byte) (Event, error) {
 	var ev struct {
 		Data struct {
 			EventType string `json:"event_type"`
 			Payload   struct {
-				ID   string `json:"id"`
-				Text string `json:"text"`
-				From struct {
+				ID    string `json:"id"`
+				Text  string `json:"text"`
+				Parts int    `json:"parts"`
+				From  struct {
 					PhoneNumber string `json:"phone_number"`
 				} `json:"from"`
+				To []struct {
+					Status string `json:"status"`
+				} `json:"to"`
+				Cost *struct {
+					Amount   string `json:"amount"`
+					Currency string `json:"currency"`
+				} `json:"cost"`
 			} `json:"payload"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &ev); err != nil {
-		return Inbound{}, false, err
-	}
-	if ev.Data.EventType != "message.received" {
-		return Inbound{}, false, nil
+		return Event{}, err
 	}
 	p := ev.Data.Payload
-	return Inbound{ID: p.ID, From: p.From.PhoneNumber, Text: p.Text}, true, nil
+	e := Event{
+		Type:  ev.Data.EventType,
+		ID:    p.ID,
+		From:  p.From.PhoneNumber,
+		Text:  p.Text,
+		Parts: p.Parts,
+	}
+	if len(p.To) > 0 {
+		e.Status = p.To[0].Status
+	}
+	if p.Cost != nil && p.Cost.Currency == "USD" {
+		e.Cost = p.Cost.Amount
+	}
+	return e, nil
 }

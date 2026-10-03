@@ -49,16 +49,22 @@ func TestNewRejectsBadKey(t *testing.T) {
 	}
 }
 
-func TestParseInbound(t *testing.T) {
-	in, ok, err := ParseInbound([]byte(`{"data":{"event_type":"message.received","payload":{"id":"m1","text":"hi","from":{"phone_number":"+14165550100"}}}}`))
-	if err != nil || !ok {
-		t.Fatalf("ok=%v err=%v", ok, err)
+func TestParseEvent(t *testing.T) {
+	e, err := ParseEvent([]byte(`{"data":{"event_type":"message.received","payload":{"id":"m1","text":"hi","parts":1,
+		"from":{"phone_number":"+14165550100"},"to":[{"status":"webhook_delivered"}],"cost":{"amount":"0.0025","currency":"USD"}}}}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if in != (Inbound{ID: "m1", From: "+14165550100", Text: "hi"}) {
-		t.Errorf("got %+v", in)
+	want := Event{Type: EventReceived, ID: "m1", From: "+14165550100", Text: "hi", Status: "webhook_delivered", Parts: 1, Cost: "0.0025"}
+	if e != want {
+		t.Errorf("got %+v, want %+v", e, want)
 	}
 
-	if _, ok, err := ParseInbound([]byte(`{"data":{"event_type":"message.finalized","payload":{}}}`)); ok || err != nil {
-		t.Errorf("delivery report: ok=%v err=%v", ok, err)
+	e, err = ParseEvent([]byte(`{"data":{"event_type":"message.sent","payload":{"id":"m2","to":[{"status":"sent"}],"cost":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Type != EventSent || e.Status != "sent" || e.Cost != "" {
+		t.Errorf("delivery report without cost: %+v", e)
 	}
 }

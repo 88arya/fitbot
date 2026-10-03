@@ -13,6 +13,7 @@ import (
 
 	"github.com/88arya/spotter/internal/config"
 	"github.com/88arya/spotter/internal/db"
+	"github.com/88arya/spotter/internal/db/store"
 	"github.com/88arya/spotter/internal/llm"
 	"github.com/88arya/spotter/internal/server"
 	"github.com/88arya/spotter/internal/telnyx"
@@ -58,12 +59,17 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		sms = &server.SMS{Telnyx: tc, AllowedSenders: cfg.AllowedSenders}
+		sms = &server.SMS{
+			Store:           store.New(pool),
+			Telnyx:          tc,
+			AllowedSenders:  cfg.AllowedSenders,
+			DefaultTimezone: cfg.DefaultTimezone.String(),
+		}
 	}
 	if cfg.OpenAI.APIKey == "" {
 		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
 	} else if sms != nil {
-		sms.LLM = llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model)
+		sms.LLM = llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model, cfg.OpenAI.InputPrice, cfg.OpenAI.OutputPrice)
 	}
 
 	srv := &http.Server{

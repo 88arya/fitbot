@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -36,6 +37,10 @@ type OpenAIConfig struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// Prices in USD per 1M tokens, used to record what each call cost.
+	// Zero means unknown, and costs are left unrecorded.
+	InputPrice  float64
+	OutputPrice float64
 }
 
 var e164 = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
@@ -104,6 +109,20 @@ func FromEnv(get func(string) string) (*Config, error) {
 			BaseURL: env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 			APIKey:  key,
 			Model:   require("OPENAI_MODEL"),
+		}
+		for key, dst := range map[string]*float64{
+			"OPENAI_INPUT_PRICE":  &c.OpenAI.InputPrice,
+			"OPENAI_OUTPUT_PRICE": &c.OpenAI.OutputPrice,
+		} {
+			v := env(key, "")
+			if v == "" {
+				continue
+			}
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				errs = append(errs, fmt.Errorf("%s: %q is not a price in USD per 1M tokens", key, v))
+			}
+			*dst = f
 		}
 	}
 

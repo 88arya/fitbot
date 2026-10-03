@@ -36,6 +36,7 @@ func TestFromEnvErrors(t *testing.T) {
 		{"bad sender", map[string]string{"DATABASE_URL": "x", "ALLOWED_SENDERS": "4165551234"}, "not E.164"},
 		{"telnyx missing public key", map[string]string{"DATABASE_URL": "x", "TELNYX_API_KEY": "k"}, "TELNYX_PUBLIC_KEY is required"},
 		{"openai missing model", map[string]string{"DATABASE_URL": "x", "OPENAI_API_KEY": "k"}, "OPENAI_MODEL is required"},
+		{"bad price", map[string]string{"DATABASE_URL": "x", "OPENAI_API_KEY": "k", "OPENAI_MODEL": "m", "OPENAI_INPUT_PRICE": "$1"}, "OPENAI_INPUT_PRICE"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

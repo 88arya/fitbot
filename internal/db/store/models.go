@@ -8,6 +8,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type LlmCall struct {
+	ID           int64              `json:"id"`
+	MessageID    int64              `json:"message_id"`
+	Model        string             `json:"model"`
+	InputTokens  int32              `json:"input_tokens"`
+	OutputTokens int32              `json:"output_tokens"`
+	LatencyMs    int32              `json:"latency_ms"`
+	CostUsd      pgtype.Numeric     `json:"cost_usd"`
+	Error        pgtype.Text        `json:"error"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type Message struct {
+	ID         int64              `json:"id"`
+	UserID     int64              `json:"user_id"`
+	Direction  string             `json:"direction"`
+	Body       string             `json:"body"`
+	ProviderID pgtype.Text        `json:"provider_id"`
+	Status     string             `json:"status"`
+	Parts      pgtype.Int4        `json:"parts"`
+	CostUsd    pgtype.Numeric     `json:"cost_usd"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID        int64              `json:"id"`
 	Phone     string             `json:"phone"`

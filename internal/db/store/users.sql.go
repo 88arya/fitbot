@@ -46,3 +46,26 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 	)
 	return i, err
 }
+
+const upsertUser = `-- name: UpsertUser :one
+INSERT INTO users (phone, timezone) VALUES ($1, $2)
+ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
+RETURNING id, phone, timezone, created_at
+`
+
+type UpsertUserParams struct {
+	Phone    string `json:"phone"`
+	Timezone string `json:"timezone"`
+}
+
+func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUser, arg.Phone, arg.Timezone)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.Timezone,
+		&i.CreatedAt,
+	)
+	return i, err
+}

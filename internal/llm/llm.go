@@ -27,19 +27,32 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	model   string
-	http    *http.Client
+	// USD per 1M tokens; zero means unknown.
+	inputPrice, outputPrice float64
+	http                    *http.Client
 }
 
-func New(baseURL, apiKey, model string) *Client {
+func New(baseURL, apiKey, model string, inputPrice, outputPrice float64) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
-		model:   model,
-		http:    &http.Client{Timeout: 30 * time.Second},
+		baseURL:     strings.TrimRight(baseURL, "/"),
+		apiKey:      apiKey,
+		model:       model,
+		inputPrice:  inputPrice,
+		outputPrice: outputPrice,
+		http:        &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
 func (c *Client) Model() string { return c.model }
+
+// Cost returns what a call with usage u cost in USD, or ok=false when the
+// model's prices are not configured.
+func (c *Client) Cost(u Usage) (usd float64, ok bool) {
+	if c.inputPrice == 0 && c.outputPrice == 0 {
+		return 0, false
+	}
+	return (float64(u.InputTokens)*c.inputPrice + float64(u.OutputTokens)*c.outputPrice) / 1e6, true
+}
 
 // Complete returns the model's reply to messages.
 func (c *Client) Complete(ctx context.Context, messages []Message) (string, Usage, error) {
