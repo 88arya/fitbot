@@ -20,6 +20,14 @@ type LlmCall struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type Memory struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	Fact      string             `json:"fact"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Message struct {
 	ID         int64              `json:"id"`
 	UserID     int64              `json:"user_id"`
@@ -34,8 +42,10 @@ type Message struct {
 }
 
 type User struct {
-	ID        int64              `json:"id"`
-	Phone     string             `json:"phone"`
-	Timezone  string             `json:"timezone"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID               int64              `json:"id"`
+	Phone            string             `json:"phone"`
+	Timezone         pgtype.Text        `json:"timezone"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Name             pgtype.Text        `json:"name"`
+	MonthlyBudgetUsd pgtype.Numeric     `json:"monthly_budget_usd"`
 }

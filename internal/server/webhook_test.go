@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/88arya/spotter/internal/agent"
 	"github.com/88arya/spotter/internal/db"
 	"github.com/88arya/spotter/internal/db/store"
 	"github.com/88arya/spotter/internal/llm"
@@ -95,13 +96,17 @@ func newHarness(t *testing.T) *harness {
 
 	// A fresh number per run keeps tests independent without wiping the database.
 	phone := fmt.Sprintf("+1999%07d", time.Now().UnixNano()%10_000_000)
+	q := store.New(pool)
 	sms := &SMS{
-		Store:           store.New(pool),
-		Telnyx:          tc,
-		LLM:             llm.New(openAI.URL, "key", "test-model", 1, 2),
-		AllowedSenders:  []string{phone},
-		DefaultTimezone: "America/Toronto",
-		Now:             func() time.Time { return time.Date(2026, 10, 3, 16, 5, 0, 0, time.UTC) },
+		Store:  q,
+		Telnyx: tc,
+		Agent: &agent.Agent{
+			Store:           q,
+			LLM:             llm.New(openAI.URL, "key", "test-model", 1, 2),
+			DefaultTimezone: "America/Toronto",
+			Now:             func() time.Time { return time.Date(2026, 10, 3, 16, 5, 0, 0, time.UTC) },
+		},
+		AllowedSenders: []string{phone},
 	}
 	return &harness{t: t, pool: pool, priv: priv, h: New(pool, sms), fakes: f, phone: phone}
 }

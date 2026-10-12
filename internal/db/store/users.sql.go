@@ -7,32 +7,30 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createUser = `-- name: CreateUser :one
-INSERT INTO users (phone, timezone) VALUES ($1, $2)
-RETURNING id, phone, timezone, created_at
+const getUser = `-- name: GetUser :one
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE id = $1
 `
 
-type CreateUserParams struct {
-	Phone    string `json:"phone"`
-	Timezone string `json:"timezone"`
-}
-
-func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Phone, arg.Timezone)
+func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
+	row := q.db.QueryRow(ctx, getUser, id)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
 		&i.Timezone,
 		&i.CreatedAt,
+		&i.Name,
+		&i.MonthlyBudgetUsd,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, timezone, created_at FROM users WHERE phone = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -43,29 +41,64 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.Phone,
 		&i.Timezone,
 		&i.CreatedAt,
+		&i.Name,
+		&i.MonthlyBudgetUsd,
 	)
 	return i, err
 }
 
-const upsertUser = `-- name: UpsertUser :one
-INSERT INTO users (phone, timezone) VALUES ($1, $2)
-ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
-RETURNING id, phone, timezone, created_at
+const updateProfile = `-- name: UpdateProfile :one
+UPDATE users
+SET name = COALESCE($2, name),
+    timezone = COALESCE($3, timezone),
+    monthly_budget_usd = COALESCE($4, monthly_budget_usd)
+WHERE id = $1
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd
 `
 
-type UpsertUserParams struct {
-	Phone    string `json:"phone"`
-	Timezone string `json:"timezone"`
+type UpdateProfileParams struct {
+	ID               int64          `json:"id"`
+	Name             pgtype.Text    `json:"name"`
+	Timezone         pgtype.Text    `json:"timezone"`
+	MonthlyBudgetUsd pgtype.Numeric `json:"monthly_budget_usd"`
 }
 
-func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, upsertUser, arg.Phone, arg.Timezone)
+// NULL arguments leave a field unchanged.
+func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateProfile,
+		arg.ID,
+		arg.Name,
+		arg.Timezone,
+		arg.MonthlyBudgetUsd,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Phone,
 		&i.Timezone,
 		&i.CreatedAt,
+		&i.Name,
+		&i.MonthlyBudgetUsd,
+	)
+	return i, err
+}
+
+const upsertUser = `-- name: UpsertUser :one
+INSERT INTO users (phone) VALUES ($1)
+ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd
+`
+
+func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUser, phone)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.Timezone,
+		&i.CreatedAt,
+		&i.Name,
+		&i.MonthlyBudgetUsd,
 	)
 	return i, err
 }

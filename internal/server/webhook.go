@@ -10,47 +10,22 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/88arya/spotter/internal/agent"
+	"github.com/88arya/spotter/internal/db"
 	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
 	"github.com/88arya/spotter/internal/telnyx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const systemPrompt = `You are Spotter, an accountability assistant that talks to people over SMS.
-Keep replies short and plain: one or two sentences, no markdown, no emoji.`
-
 const fallbackReply = "Sorry, I can't think right now. Try again in a few minutes."
 
-// historyLen is how many recent messages are sent to the model with each request.
-const historyLen = 20
-
-// SMS holds what the Telnyx webhook needs. A nil LLM sends the fallback reply.
+// SMS holds what the Telnyx webhook needs. A nil Agent sends the fallback reply.
 type SMS struct {
-	Store           *store.Queries
-	Telnyx          *telnyx.Client
-	LLM             *llm.Client
-	AllowedSenders  []string
-	DefaultTimezone string
-	// Now returns the current time; nil means time.Now. Tests set it.
-	Now func() time.Time
-}
-
-func (s *SMS) now() time.Time {
-	if s.Now != nil {
-		return s.Now()
-	}
-	return time.Now()
-}
-
-// localTime tells the model the user's date and time, which it cannot know
-// on its own.
-func localTime(now time.Time, tz string) string {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		loc = time.UTC
-	}
-	return "The user's local time is " + now.In(loc).Format("Monday, January 2, 2006, 3:04 PM") + " (" + loc.String() + ")."
+	Store          *store.Queries
+	Telnyx         *telnyx.Client
+	Agent          *agent.Agent
+	AllowedSenders []string
 }
 
 func (s *SMS) handleTelnyx(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +67,7 @@ func (s *SMS) handleInbound(w http.ResponseWriter, r *http.Request, e telnyx.Eve
 	}
 
 	ctx := r.Context()
-	user, err := s.Store.UpsertUser(ctx, store.UpsertUserParams{Phone: e.From, Timezone: s.DefaultTimezone})
+	user, err := s.Store.UpsertUser(ctx, e.From)
 	if err != nil {
 		s.fail(w, e, "storing user", err)
 		return
@@ -102,7 +77,7 @@ func (s *SMS) handleInbound(w http.ResponseWriter, r *http.Request, e telnyx.Eve
 		Body:       e.Text,
 		ProviderID: pgtype.Text{String: e.ID, Valid: true},
 		Parts:      parts(e.Parts),
-		CostUsd:    numeric(e.Cost),
+		CostUsd:    db.Numeric(e.Cost),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		slog.Info("ignored duplicate webhook", "id", e.ID)
@@ -132,7 +107,7 @@ func (s *SMS) handleDelivery(w http.ResponseWriter, r *http.Request, e telnyx.Ev
 		ProviderID: pgtype.Text{String: e.ID, Valid: true},
 		Status:     e.Status,
 		Parts:      parts(e.Parts),
-		CostUsd:    numeric(e.Cost),
+		CostUsd:    db.Numeric(e.Cost),
 	})
 	if err != nil {
 		s.fail(w, e, "storing delivery report", err)
@@ -165,12 +140,15 @@ func (s *SMS) fail(w http.ResponseWriter, e telnyx.Event, what string, err error
 }
 
 func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
 	text := fallbackReply
-	if s.LLM != nil {
-		if out, err := s.complete(ctx, user, in); err == nil {
+	if s.Agent != nil {
+		out, err := s.Agent.Reply(ctx, user.ID, in)
+		if err != nil {
+			slog.Error("agent failed", "message_id", in.ID, "err", err)
+		} else {
 			text = out
 		}
 	}
@@ -199,76 +177,8 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 	slog.Info("reply sent", "id", id, "to", user.Phone, "message_id", out.ID)
 }
 
-// complete asks the LLM for a reply to the conversation so far and records the call.
-func (s *SMS) complete(ctx context.Context, user store.User, in store.Message) (string, error) {
-	history, err := s.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: user.ID, Limit: historyLen})
-	if err != nil {
-		slog.Error("loading history", "user_id", user.ID, "err", err)
-		return "", err
-	}
-	msgs := []llm.Message{{Role: "system", Content: systemPrompt + "\n\n" + localTime(s.now(), user.Timezone)}}
-	for _, m := range history {
-		switch {
-		case m.Direction == "inbound":
-			msgs = append(msgs, llm.Message{Role: "user", Content: m.Body})
-		case m.Status != "failed" && m.Status != "sending":
-			msgs = append(msgs, llm.Message{Role: "assistant", Content: m.Body})
-		}
-	}
-
-	model := s.LLM.Model()
-	start := time.Now()
-	out, usage, err := s.LLM.Complete(ctx, msgs)
-	latency := time.Since(start)
-
-	call := store.InsertLLMCallParams{
-		MessageID:    in.ID,
-		Model:        model,
-		InputTokens:  int32(usage.InputTokens),
-		OutputTokens: int32(usage.OutputTokens),
-		LatencyMs:    int32(latency.Milliseconds()),
-	}
-	cost, priced := s.LLM.Cost(usage)
-	if priced {
-		call.CostUsd = numeric(strconv.FormatFloat(cost, 'f', 8, 64))
-		llmCost.WithLabelValues(model).Add(cost)
-	}
-	result := "ok"
-	if err != nil {
-		result = "error"
-		call.Error = pgtype.Text{String: err.Error(), Valid: true}
-	}
-	if dbErr := s.Store.InsertLLMCall(ctx, call); dbErr != nil {
-		slog.Error("storing llm call", "message_id", in.ID, "err", dbErr)
-	}
-
-	llmCalls.WithLabelValues(model, result).Inc()
-	llmLatency.WithLabelValues(model).Observe(latency.Seconds())
-	llmTokens.WithLabelValues(model, "input").Add(float64(usage.InputTokens))
-	llmTokens.WithLabelValues(model, "output").Add(float64(usage.OutputTokens))
-
-	if err != nil {
-		slog.Error("llm call failed", "message_id", in.ID, "model", model, "err", err)
-		return "", err
-	}
-	slog.Info("llm call", "message_id", in.ID, "model", model, "latency_ms", latency.Milliseconds(),
-		"history", len(history), "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
-		"cost_usd", cost)
-	return out, nil
-}
-
 func parts(n int) pgtype.Int4 {
 	return pgtype.Int4{Int32: int32(n), Valid: n > 0}
-}
-
-// numeric converts a decimal string like "0.0025" to a NUMERIC, or NULL when
-// it is empty or malformed.
-func numeric(s string) pgtype.Numeric {
-	var n pgtype.Numeric
-	if s == "" || n.Scan(s) != nil {
-		return pgtype.Numeric{}
-	}
-	return n
 }
 
 func parseUSD(s string) (float64, bool) {
