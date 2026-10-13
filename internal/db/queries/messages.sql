@@ -37,3 +37,6 @@ ORDER BY created_at, id;
 -- name: InsertLLMCall :exec
 INSERT INTO llm_calls (message_id, model, input_tokens, output_tokens, latency_ms, cost_usd, error)
 VALUES ($1, $2, $3, $4, $5, $6, $7);
+
+-- name: CountMessages :one
+SELECT count(*) FROM messages WHERE user_id = $1;

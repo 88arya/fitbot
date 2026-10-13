@@ -84,16 +84,25 @@ func newEnv(t *testing.T, script ...string) *env {
 	}}
 }
 
+// newUser returns a fresh user who has been sent the intro, as Greet does.
+func (e *env) newUser() store.User {
+	e.t.Helper()
+	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1888%07d", time.Now().UnixNano()%10_000_000))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.q.InsertOutbound(e.ctx, store.InsertOutboundParams{UserID: user.ID, Body: Intro()}); err != nil {
+		e.t.Fatal(err)
+	}
+	return user
+}
+
 // text stores an inbound text from a fresh user (or the given one) and
 // returns the agent's reply.
 func (e *env) text(user store.User, body string) (store.User, string, error) {
 	e.t.Helper()
 	if user.ID == 0 {
-		var err error
-		user, err = e.q.UpsertUser(e.ctx, fmt.Sprintf("+1888%07d", time.Now().UnixNano()%10_000_000))
-		if err != nil {
-			e.t.Fatal(err)
-		}
+		user = e.newUser()
 	}
 	in, err := e.q.InsertInbound(e.ctx, store.InsertInboundParams{
 		UserID:     user.ID,
@@ -122,12 +131,12 @@ func (e *env) memories(userID int64) []string {
 
 func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	e := newEnv(t,
-		calls("set_profile", `{"name":"Arya","timezone":"America/Vancouver","monthly_budget_usd":20}`,
+		calls("set_profile", `{"name":"Arya","timezone":"America/Vancouver"}`,
 			"remember", `{"fact":"Works as a doctor"}`),
 		`{"role":"assistant","content":"Nice to meet you, Arya."}`,
 	)
-	user, reply, err := e.text(store.User{}, "I'm Arya, a doctor in Vancouver, budget 20")
-	if err != nil || reply != "Nice to meet you, Arya." {
+	user, reply, err := e.text(store.User{}, "I'm Arya, a doctor in Vancouver")
+	if err != nil || reply != "Nice to meet you, Arya. "+setupDone {
 		t.Fatalf("reply=%q err=%v", reply, err)
 	}
 
@@ -135,9 +144,8 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	budget, _ := usd(user.MonthlyBudgetUsd)
-	if user.Name.String != "Arya" || user.Timezone.String != "America/Vancouver" || budget != 20 {
-		t.Errorf("profile = %q %q %v", user.Name.String, user.Timezone.String, budget)
+	if user.Name.String != "Arya" || user.Timezone.String != "America/Vancouver" {
+		t.Errorf("profile = %q %q", user.Name.String, user.Timezone.String)
 	}
 	if got := e.memories(user.ID); fmt.Sprint(got) != "[Works as a doctor]" {
 		t.Errorf("memories = %v", got)
@@ -147,7 +155,7 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	// the saved profile and memory.
 	second := e.llm.requests[1]
 	sys := second[0].Content
-	for _, want := range []string{"name: Arya", "timezone: America/Vancouver", "monthly budget: $20.00", "Works as a doctor",
+	for _, want := range []string{"name: Arya", "timezone: America/Vancouver", "Works as a doctor",
 		"Saturday, October 3, 2026, 9:05 AM (America/Vancouver)"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt lacks %q:\n%s", want, sys)
@@ -167,31 +175,58 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	}
 }
 
-func TestOnboardingPrompt(t *testing.T) {
-	e := newEnv(t)
-	user, _, err := e.text(store.User{}, "hey")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sys := e.llm.requests[0][0].Content
-	for _, want := range []string{"Still missing: name, timezone, monthly budget", "first message", "assume America/Toronto"} {
-		if !strings.Contains(sys, want) {
-			t.Errorf("first prompt lacks %q:\n%s", want, sys)
+func TestSetup(t *testing.T) {
+	e := newEnv(t,
+		calls("set_profile", `{"name":"Arya","timezone":null}`),
+		`{"role":"assistant","content":"Got it."}`,
+		`{"role":"assistant","content":"I'm here to keep you on track."}`,
+		calls("set_profile", `{"name":null,"timezone":"America/Toronto"}`),
+		`{"role":"assistant","content":"Got it."}`,
+		`{"role":"assistant","content":"Hey Arya."}`,
+	)
+	user := e.newUser()
+	for _, step := range []struct{ in, want string }{
+		{"Arya", "Got it. " + fields[1].question},
+		// An off-topic text is answered, and the same question asked again.
+		{"what do you do", "I'm here to keep you on track. " + fields[1].question},
+		{"toronto", "Got it. " + setupDone},
+		{"hey", "Hey Arya."},
+	} {
+		_, reply, err := e.text(user, step.in)
+		if err != nil || reply != step.want {
+			t.Errorf("%q: reply=%q err=%v, want %q", step.in, reply, err, step.want)
 		}
 	}
 
-	if _, _, err := e.text(user, "again"); err != nil {
+	sys := e.llm.requests[0][0].Content
+	for _, want := range []string{"Still missing: name, timezone", "assume America/Toronto", "Do not ask"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("setup prompt lacks %q:\n%s", want, sys)
+		}
+	}
+	if sys := e.llm.requests[len(e.llm.requests)-1][0].Content; strings.Contains(sys, "Setup is in progress") {
+		t.Errorf("prompt after setup still mentions it:\n%s", sys)
+	}
+}
+
+func TestIntroWhenUserTextsFirst(t *testing.T) {
+	e := newEnv(t)
+	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1666%07d", time.Now().UnixNano()%10_000_000))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if sys := e.llm.requests[1][0].Content; strings.Contains(sys, "first message") {
-		t.Errorf("second prompt still treats the text as the first:\n%s", sys)
+	if _, reply, err := e.text(user, "hello?"); err != nil || reply != Intro() {
+		t.Errorf("reply=%q err=%v, want the intro", reply, err)
+	}
+	if n := len(e.llm.requests); n != 0 {
+		t.Errorf("LLM calls = %d, want 0", n)
 	}
 }
 
 func TestToolValidation(t *testing.T) {
 	e := newEnv(t,
-		calls("set_profile", `{"name":null,"timezone":"Mars/Base","monthly_budget_usd":null}`,
-			"set_profile", `{"name":null,"timezone":null,"monthly_budget_usd":-5}`,
+		calls("set_profile", `{"name":null,"timezone":"Mars/Base"}`,
+			"set_profile", `{"name":"  ","timezone":null}`,
 			"remember", `{"fact":"  "}`),
 	)
 	user, _, err := e.text(store.User{}, "x")
@@ -213,7 +248,7 @@ func TestToolValidation(t *testing.T) {
 		}
 	}
 	user, _ = e.q.GetUser(e.ctx, user.ID)
-	if user.Timezone.Valid || user.MonthlyBudgetUsd.Valid || len(e.memories(user.ID)) != 0 {
+	if user.Name.Valid || user.Timezone.Valid || len(e.memories(user.ID)) != 0 {
 		t.Errorf("invalid calls changed data: %+v", user)
 	}
 }

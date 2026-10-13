@@ -87,6 +87,9 @@ func run() error {
 		slog.Info("listening", "addr", cfg.HTTPAddr, "version", version)
 		errc <- srv.ListenAndServe()
 	}()
+	if sms != nil {
+		go sms.Greet(ctx)
+	}
 
 	select {
 	case err := <-errc:

@@ -43,12 +43,24 @@ func (a *Agent) now() time.Time {
 
 // Reply returns the text to send back for in, the user's latest message,
 // which must already be stored. Tool calls along the way are applied to the
-// database.
+// database. While setup is unfinished, the reply ends with the next setup
+// question.
 func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (string, error) {
 	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen})
 	if err != nil {
 		return "", fmt.Errorf("loading history: %w", err)
 	}
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("loading user: %w", err)
+	}
+	wasMissing := len(missingFields(user)) > 0
+	// A user who texts before Spotter has greeted them gets the intro, so
+	// setup starts the same way either way.
+	if len(history) == 1 && wasMissing {
+		return Intro(), nil
+	}
+
 	var convo []llm.Message
 	for _, m := range history {
 		switch {
@@ -58,8 +70,6 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 			convo = append(convo, llm.Message{Role: "assistant", Content: m.Body})
 		}
 	}
-	first := len(history) == 1
-
 	for range maxRounds {
 		// The prompt is rebuilt each round so it shows changes made by tools.
 		user, err := a.Store.GetUser(ctx, userID)
@@ -70,14 +80,14 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", fmt.Errorf("loading memories: %w", err)
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(user, memories, first)}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(user, memories)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
 			return "", err
 		}
 		if len(out.ToolCalls) == 0 {
-			return out.Content, nil
+			return withSetup(out.Content, user, wasMissing), nil
 		}
 		convo = append(convo, out)
 		for _, tc := range out.ToolCalls {
@@ -133,7 +143,7 @@ func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (l
 const basePrompt = `You are Spotter, an accountability assistant that texts with people over SMS.
 Keep replies short and plain: one or two sentences, no markdown, no emoji.`
 
-func (a *Agent) systemPrompt(user store.User, memories []store.Memory, first bool) string {
+func (a *Agent) systemPrompt(user store.User, memories []store.Memory) string {
 	var b strings.Builder
 	b.WriteString(basePrompt)
 
@@ -153,21 +163,13 @@ func (a *Agent) systemPrompt(user store.User, memories []store.Memory, first boo
 		fmt.Fprintf(&b, "timezone: missing (times below assume %s)\n", tz)
 		missing = append(missing, "timezone")
 	}
-	if budget, ok := usd(user.MonthlyBudgetUsd); ok {
-		fmt.Fprintf(&b, "monthly budget: $%.2f\n", budget)
-	} else {
-		b.WriteString("monthly budget: missing\n")
-		missing = append(missing, "monthly budget")
-	}
-	b.WriteString("The monthly budget is what the user wants to spend each month on running Spotter (texts and AI), in USD.\n")
 	if len(missing) > 0 {
-		fmt.Fprintf(&b, "\nStill missing: %s. Ask for these one at a time, woven into the conversation, "+
-			"and save each answer with set_profile. Convert a city or region to its IANA timezone.\n", strings.Join(missing, ", "))
-		if first {
-			b.WriteString("This is the user's first message: start with a one-sentence introduction of yourself.\n")
-		}
+		fmt.Fprintf(&b, "\nSetup is in progress. Still missing: %s. If the conversation gives any of these, save them "+
+			"with set_profile. Convert a city or region to its IANA timezone. Do not ask for missing fields yourself: "+
+			"the next setup question is added after your reply. If the user only answered a setup question, "+
+			"reply with a brief acknowledgement like \"Got it.\"\n", strings.Join(missing, ", "))
 	}
-	b.WriteString("The user can change any field later, like \"set my budget to 20\"; save changes with set_profile.\n")
+	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile.\n")
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {
@@ -187,9 +189,4 @@ func (a *Agent) systemPrompt(user store.User, memories []store.Memory, first boo
 	fmt.Fprintf(&b, "\n## Time\nThe user's local time is %s (%s).",
 		a.now().In(loc).Format("Monday, January 2, 2006, 3:04 PM"), loc)
 	return b.String()
-}
-
-func usd(n pgtype.Numeric) (float64, bool) {
-	f, err := n.Float64Value()
-	return f.Float64, err == nil && f.Valid
 }

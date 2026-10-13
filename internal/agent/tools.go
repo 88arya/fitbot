@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/88arya/spotter/internal/db"
 	"github.com/88arya/spotter/internal/db/store"
 	"github.com/88arya/spotter/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -33,9 +31,8 @@ var tools = []llm.Tool{
 		Name:        "set_profile",
 		Description: "Save the user's profile fields. Pass null for fields that are not changing.",
 		Parameters: object(map[string]any{
-			"name":               map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
-			"timezone":           map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
-			"monthly_budget_usd": map[string]any{"type": []string{"number", "null"}, "description": "Monthly budget for running Spotter, in USD."},
+			"name":     map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
+			"timezone": map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
 		}),
 	},
 	{
@@ -94,9 +91,8 @@ func (a *Agent) runTool(ctx context.Context, userID int64, tc llm.ToolCall) stri
 
 func (a *Agent) setProfile(ctx context.Context, userID int64, raw []byte) (string, error) {
 	var args struct {
-		Name     *string  `json:"name"`
-		Timezone *string  `json:"timezone"`
-		Budget   *float64 `json:"monthly_budget_usd"`
+		Name     *string `json:"name"`
+		Timezone *string `json:"timezone"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "error: invalid arguments", nil
@@ -117,13 +113,7 @@ func (a *Agent) setProfile(ctx context.Context, userID int64, raw []byte) (strin
 		}
 		p.Timezone = pgtype.Text{String: tz, Valid: true}
 	}
-	if args.Budget != nil {
-		if *args.Budget < 0 || *args.Budget > 100_000 {
-			return "error: budget must be between 0 and 100000 USD", nil
-		}
-		p.MonthlyBudgetUsd = db.Numeric(strconv.FormatFloat(*args.Budget, 'f', 2, 64))
-	}
-	if !p.Name.Valid && !p.Timezone.Valid && !p.MonthlyBudgetUsd.Valid {
+	if !p.Name.Valid && !p.Timezone.Valid {
 		return "error: no fields given", nil
 	}
 	if _, err := a.Store.UpdateProfile(ctx, p); err != nil {

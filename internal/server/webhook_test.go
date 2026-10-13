@@ -44,6 +44,7 @@ type harness struct {
 	h     http.Handler
 	fakes *fakes
 	phone string
+	sms   *SMS
 }
 
 func newHarness(t *testing.T) *harness {
@@ -108,7 +109,7 @@ func newHarness(t *testing.T) *harness {
 		},
 		AllowedSenders: []string{phone},
 	}
-	return &harness{t: t, pool: pool, priv: priv, h: New(pool, sms), fakes: f, phone: phone}
+	return &harness{t: t, pool: pool, priv: priv, h: New(pool, sms), fakes: f, phone: phone, sms: sms}
 }
 
 func (h *harness) post(event map[string]any) int {
@@ -175,9 +176,13 @@ func TestWebhookConversation(t *testing.T) {
 		t.Fatalf("delivery report: %d", code)
 	}
 
-	// The second text's request should carry the first exchange as history.
+	// A first text gets the intro without an LLM call; the second text's
+	// request carries that exchange as history, and its reply asks the first
+	// setup question.
 	h.text(inID+"-2", "and again")
-	h.waitSends(2)
+	if s := h.waitSends(2); s[0] != agent.Intro() || s[1] != "reply 1 What should I call you?" {
+		t.Errorf("sent = %q", s)
+	}
 	h.fakes.mu.Lock()
 	last := h.fakes.requests[len(h.fakes.requests)-1]
 	h.fakes.mu.Unlock()
@@ -189,7 +194,7 @@ func TestWebhookConversation(t *testing.T) {
 		roles = append(roles, m.Role)
 		bodies = append(bodies, m.Content)
 	}
-	if fmt.Sprint(roles) != "[user assistant user]" || fmt.Sprint(bodies) != "[hi reply 1 and again]" {
+	if fmt.Sprint(roles) != "[user assistant user]" || fmt.Sprint(bodies) != fmt.Sprint([]string{"hi", agent.Intro(), "and again"}) {
 		t.Errorf("history = %v %v", roles, bodies)
 	}
 
@@ -223,9 +228,23 @@ func TestWebhookConversation(t *testing.T) {
 		WHERE u.phone = $1`, h.phone).Scan(&calls, &llmCost); err != nil {
 		t.Fatal(err)
 	}
-	// 100 input tokens at $1/M plus 10 output at $2/M, twice.
-	if calls != 2 || llmCost != "0.00024000" {
+	// 100 input tokens at $1/M plus 10 output at $2/M, once.
+	if calls != 1 || llmCost != "0.00012000" {
 		t.Errorf("llm_calls: count=%d cost=%s", calls, llmCost)
+	}
+}
+
+func TestGreetOnce(t *testing.T) {
+	h := newHarness(t)
+	h.sms.Greet(context.Background())
+	if s := h.waitSends(1); s[0] != agent.Intro() {
+		t.Errorf("greeting = %q", s[0])
+	}
+	// A restart does not greet again.
+	h.sms.Greet(context.Background())
+	time.Sleep(100 * time.Millisecond)
+	if s := h.fakes.sent(); len(s) != 1 {
+		t.Errorf("greeted twice: %q", s)
 	}
 }
 

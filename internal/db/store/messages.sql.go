@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countMessages = `-- name: CountMessages :one
+SELECT count(*) FROM messages WHERE user_id = $1
+`
+
+func (q *Queries) CountMessages(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessages, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertInbound = `-- name: InsertInbound :one
 INSERT INTO messages (user_id, direction, body, provider_id, status, parts, cost_usd)
 VALUES ($1, 'inbound', $2, $3, 'received', $4, $5)

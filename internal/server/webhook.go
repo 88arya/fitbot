@@ -152,7 +152,34 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 			text = out
 		}
 	}
+	s.send(ctx, user, text)
+}
 
+// Greet texts the intro to allowed senders Spotter has never texted, so setup
+// starts as soon as Spotter runs instead of waiting for their first text.
+func (s *SMS) Greet(ctx context.Context) {
+	if s.Agent == nil {
+		return
+	}
+	for _, phone := range s.AllowedSenders {
+		user, err := s.Store.UpsertUser(ctx, phone)
+		if err != nil {
+			slog.Error("storing user", "phone", phone, "err", err)
+			continue
+		}
+		n, err := s.Store.CountMessages(ctx, user.ID)
+		if err != nil {
+			slog.Error("counting messages", "phone", phone, "err", err)
+			continue
+		}
+		if n == 0 {
+			s.send(ctx, user, agent.Intro())
+		}
+	}
+}
+
+// send stores text as an outbound message and sends it.
+func (s *SMS) send(ctx context.Context, user store.User, text string) {
 	out, err := s.Store.InsertOutbound(ctx, store.InsertOutboundParams{UserID: user.ID, Body: text})
 	if err != nil {
 		slog.Error("storing outbound text", "to", user.Phone, "err", err)
@@ -160,7 +187,7 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 	}
 	id, err := s.Telnyx.Send(ctx, user.Phone, text)
 	if err != nil {
-		slog.Error("reply failed", "to", user.Phone, "message_id", out.ID, "err", err)
+		slog.Error("send failed", "to", user.Phone, "message_id", out.ID, "err", err)
 		smsMessages.WithLabelValues("outbound", "failed").Inc()
 		if err := s.Store.MarkOutboundFailed(ctx, out.ID); err != nil {
 			slog.Error("marking text failed", "message_id", out.ID, "err", err)
@@ -174,7 +201,7 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 		slog.Error("marking text sent", "message_id", out.ID, "err", err)
 	}
 	smsMessages.WithLabelValues("outbound", "sent").Inc()
-	slog.Info("reply sent", "id", id, "to", user.Phone, "message_id", out.ID)
+	slog.Info("text sent", "id", id, "to", user.Phone, "message_id", out.ID)
 }
 
 func parts(n int) pgtype.Int4 {
