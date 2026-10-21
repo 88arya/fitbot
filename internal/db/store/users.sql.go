@@ -47,6 +47,38 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 	return i, err
 }
 
+const listUsersWithTimezone = `-- name: ListUsersWithTimezone :many
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE timezone IS NOT NULL ORDER BY id
+`
+
+// Users whose local time is known, so scheduled texts can be timed for them.
+func (q *Queries) ListUsersWithTimezone(ctx context.Context) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsersWithTimezone)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Phone,
+			&i.Timezone,
+			&i.CreatedAt,
+			&i.Name,
+			&i.MonthlyBudgetUsd,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE users
 SET name = COALESCE($2, name),

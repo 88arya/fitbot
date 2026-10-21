@@ -63,7 +63,7 @@ func (c *Client) Send(ctx context.Context, to, body string) (string, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("telnyx send: %s: %s", resp.Status, msg)
+		return "", &APIError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(msg)}
 	}
 
 	var out struct {
@@ -75,6 +75,18 @@ func (c *Client) Send(ctx context.Context, to, body string) (string, error) {
 		return "", fmt.Errorf("telnyx send: decoding response: %w", err)
 	}
 	return out.Data.ID, nil
+}
+
+// APIError is a send Telnyx answered with an error status. Most mean the
+// text was not sent; a gateway error may come after it was.
+type APIError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("telnyx send: %s: %s", e.Status, e.Body)
 }
 
 // Verify checks a webhook's Ed25519 signature over "timestamp|body".

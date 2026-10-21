@@ -17,3 +17,7 @@ RETURNING *;
 
 -- name: GetUser :one
 SELECT * FROM users WHERE id = $1;
+
+-- name: ListUsersWithTimezone :many
+-- Users whose local time is known, so scheduled texts can be timed for them.
+SELECT * FROM users WHERE timezone IS NOT NULL ORDER BY id;

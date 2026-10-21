@@ -8,6 +8,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Delivery struct {
+	ID          int64              `json:"id"`
+	UserID      int64              `json:"user_id"`
+	Kind        string             `json:"kind"`
+	LocalDate   pgtype.Date        `json:"local_date"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	RunAt       pgtype.Timestamptz `json:"run_at"`
+	Status      string             `json:"status"`
+	Attempts    int32              `json:"attempts"`
+	MessageID   pgtype.Int8        `json:"message_id"`
+	Error       pgtype.Text        `json:"error"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LlmCall struct {
 	ID           int64              `json:"id"`
 	MessageID    int64              `json:"message_id"`

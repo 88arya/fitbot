@@ -16,6 +16,7 @@ import (
 	"github.com/88arya/fitbot/internal/db"
 	"github.com/88arya/fitbot/internal/db/store"
 	"github.com/88arya/fitbot/internal/llm"
+	"github.com/88arya/fitbot/internal/scheduler"
 	"github.com/88arya/fitbot/internal/server"
 	"github.com/88arya/fitbot/internal/telnyx"
 )
@@ -87,14 +88,30 @@ func run() error {
 		slog.Info("listening", "addr", cfg.HTTPAddr, "version", version)
 		errc <- srv.ListenAndServe()
 	}()
+	// Scheduled texts go out only when texting is enabled. sched is closed
+	// once Run returns, so shutdown can wait for a send in progress.
+	sched := make(chan struct{})
 	if sms != nil {
 		go sms.Greet(ctx)
+		s := &scheduler.Scheduler{
+			Pool:       pool,
+			Sender:     sms.Telnyx,
+			Recipients: cfg.AllowedSenders,
+			Checkins:   []scheduler.Checkin{scheduler.MorningCheckin},
+		}
+		go func() {
+			defer close(sched)
+			s.Run(ctx)
+		}()
+	} else {
+		close(sched)
 	}
 
+	var serveErr error
 	select {
 	case err := <-errc:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			serveErr = err
 		}
 	case <-ctx.Done():
 		slog.Info("shutting down")
@@ -102,7 +119,14 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	stop()
+	err = errors.Join(serveErr, srv.Shutdown(shutdownCtx))
+	select {
+	case <-sched:
+	case <-shutdownCtx.Done():
+		slog.Warn("scheduler did not stop in time")
+	}
+	return err
 }
 
 func healthcheck() int {
