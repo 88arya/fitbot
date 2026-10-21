@@ -17,7 +17,7 @@ profile=$(curl -sSf -H "$auth" "$api/phone_numbers?filter%5Bphone_number%5D=${TE
   grep -oE '"messaging_profile_id": *"[^"]+"' | head -1 | cut -d'"' -f4)
 [ -n "$profile" ] || { echo "no messaging profile for $TELNYX_FROM_NUMBER" >&2; exit 1; }
 
-pidfile=${TMPDIR:-/tmp}/spotter-tunnel.pid
+pidfile=${TMPDIR:-/tmp}/fitbot-tunnel.pid
 
 # On Windows (Git Bash) cloudflared runs as a native process tree that bash's
 # kill does not reach, so it is stopped by Windows PID with taskkill.

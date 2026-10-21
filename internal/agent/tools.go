@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -37,7 +37,7 @@ var tools = []llm.Tool{
 	},
 	{
 		Name:        "remember",
-		Description: "Save a new lasting fact about the user as a short sentence, like \"Works as a nurse\".",
+		Description: "Save a new lasting fact about the user as a short sentence, like \"Trains legs on Mondays\".",
 		Parameters:  object(map[string]any{"fact": map[string]any{"type": "string"}}),
 	},
 	{

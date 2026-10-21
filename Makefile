@@ -1,10 +1,10 @@
 .PHONY: run build test lint generate db-up up down tunnel tf-plan tf-apply
 
 run:
-	go run ./cmd/spotter
+	go run ./cmd/fitbot
 
 build:
-	go build -o bin/spotter ./cmd/spotter
+	go build -o bin/fitbot ./cmd/fitbot
 
 test:
 	go test ./...

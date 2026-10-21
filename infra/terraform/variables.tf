@@ -7,7 +7,7 @@ variable "region" {
 variable "name" {
   description = "Name prefix for all resources."
   type        = string
-  default     = "spotter"
+  default     = "fitbot"
 }
 
 variable "instance_type" {
@@ -25,7 +25,7 @@ variable "root_volume_gb" {
 variable "github_repo" {
   description = "GitHub repo (owner/name) allowed to deploy through OIDC."
   type        = string
-  default     = "88arya/spotter"
+  default     = "88arya/fitbot"
 }
 
 variable "create_github_oidc_provider" {
@@ -37,5 +37,5 @@ variable "create_github_oidc_provider" {
 variable "env_parameter_name" {
   description = "SSM Parameter Store name holding the production .env file."
   type        = string
-  default     = "/spotter/prod/env"
+  default     = "/fitbot/prod/env"
 }

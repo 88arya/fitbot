@@ -17,5 +17,5 @@ if [ ! -f /swapfile ]; then
 fi
 swapon -a
 
-mkdir -p /opt/spotter
-chmod 700 /opt/spotter
+mkdir -p /opt/fitbot
+chmod 700 /opt/fitbot

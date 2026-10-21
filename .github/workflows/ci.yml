@@ -16,17 +16,17 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: spotter
-          POSTGRES_PASSWORD: spotter
-          POSTGRES_DB: spotter
+          POSTGRES_USER: fitbot
+          POSTGRES_PASSWORD: fitbot
+          POSTGRES_DB: fitbot
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U spotter"
+          --health-cmd "pg_isready -U fitbot"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://spotter:spotter@localhost:5432/spotter?sslmode=disable
+      DATABASE_URL: postgres://fitbot:fitbot@localhost:5432/fitbot?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -36,7 +36,7 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go build ./cmd/spotter
+      - run: go build ./cmd/fitbot
       - uses: sqlc-dev/setup-sqlc@v5
         with:
           sqlc-version: "1.29.0"
@@ -60,7 +60,7 @@ jobs:
         run: |
           cp .env.example .env && touch deploy/.env
           docker compose -f docker-compose.yml config --quiet
-          DOMAIN=example.com POSTGRES_PASSWORD=x SPOTTER_IMAGE=x \
+          DOMAIN=example.com POSTGRES_PASSWORD=x FITBOT_IMAGE=x \
             docker compose -f deploy/compose.yml --env-file /dev/null config --quiet
       - name: shellcheck
         run: shellcheck deploy/deploy.sh infra/terraform/cloud-init.sh

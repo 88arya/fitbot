@@ -5,9 +5,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /spotter ./cmd/spotter
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /fitbot ./cmd/fitbot
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /spotter /spotter
+COPY --from=build /fitbot /fitbot
 EXPOSE 8080
-ENTRYPOINT ["/spotter"]
+ENTRYPOINT ["/fitbot"]

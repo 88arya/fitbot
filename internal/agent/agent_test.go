@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/88arya/spotter/internal/db"
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
+	"github.com/88arya/fitbot/internal/db"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/88arya/spotter/internal/db"
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
+	"github.com/88arya/fitbot/internal/db"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -55,7 +55,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		return "", fmt.Errorf("loading user: %w", err)
 	}
 	wasMissing := len(missingFields(user)) > 0
-	// A user who texts before Spotter has greeted them gets the intro, so
+	// A user who texts before Fitbot has greeted them gets the intro, so
 	// setup starts the same way either way.
 	if len(history) == 1 && wasMissing {
 		return Intro(), nil
@@ -140,7 +140,7 @@ func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (l
 	return out, nil
 }
 
-const basePrompt = `You are Spotter, an accountability assistant that texts with people over SMS.
+const basePrompt = `You are Fitbot, a health and fitness assistant that texts with people over SMS.
 Keep replies short and plain: one or two sentences, no markdown, no emoji.`
 
 func (a *Agent) systemPrompt(user store.User, memories []store.Memory) string {
@@ -178,7 +178,7 @@ func (a *Agent) systemPrompt(user store.User, memories []store.Memory) string {
 	for _, m := range memories {
 		fmt.Fprintf(&b, "#%d %s\n", m.ID, m.Fact)
 	}
-	fmt.Fprintf(&b, "Save lasting facts worth knowing later (work, goals, routines, preferences, important people) with remember. "+
+	fmt.Fprintf(&b, "Save lasting facts worth knowing later (training, diet, sleep, injuries, goals, routines, preferences) with remember. "+
 		"Skip small talk and anything already in the profile. If a fact changes or replaces one above, call update_memory "+
 		"with its id instead of remember. Call forget when a fact stops being true or the user asks. At most %d facts.\n", maxMemories)
 

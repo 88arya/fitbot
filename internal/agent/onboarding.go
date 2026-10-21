@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"github.com/88arya/spotter/internal/db/store"
+	"github.com/88arya/fitbot/internal/db/store"
 )
 
 // Setup collects the profile one field at a time. Code asks the questions so
@@ -23,9 +23,9 @@ var fields = []field{
 
 const setupDone = `You're all set. You can change these any time, like "I moved to Vancouver".`
 
-// Intro is the first text Spotter sends a new user.
+// Intro is the first text Fitbot sends a new user.
 func Intro() string {
-	return "Hi, I'm Spotter. I'll text you reminders and check in on your goals. " +
+	return "Hi, I'm Fitbot. I'll help you stay on track with your training, food, and sleep. " +
 		"A few quick questions to set up first. " + fields[0].question
 }
 

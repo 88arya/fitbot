@@ -77,7 +77,7 @@ jobs:
         env:
           INSTANCE_ID: ${{ vars.INSTANCE_ID }}
           ENV_PARAM: ${{ vars.ENV_PARAM }}
-          SPOTTER_IMAGE: ${{ needs.image.outputs.ref }}
+          FITBOT_IMAGE: ${{ needs.image.outputs.ref }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -87,16 +87,16 @@ jobs:
             --arg caddy "$(b64 deploy/Caddyfile)" \
             --arg deploy "$(b64 deploy/deploy.sh)" \
             --arg token "$GHCR_TOKEN" --arg actor "$GITHUB_ACTOR" \
-            --arg image "$SPOTTER_IMAGE" --arg param "$ENV_PARAM" --arg region "$AWS_REGION" \
+            --arg image "$FITBOT_IMAGE" --arg param "$ENV_PARAM" --arg region "$AWS_REGION" \
             '{commands: [
               "set -euo pipefail",
-              "cd /opt/spotter",
+              "cd /opt/fitbot",
               "echo \($compose) | base64 -d > compose.yml",
               "echo \($caddy) | base64 -d > Caddyfile",
               "echo \($deploy) | base64 -d > deploy.sh",
               "echo \($token) | docker login ghcr.io -u \($actor) --password-stdin",
               "trap \"docker logout ghcr.io\" EXIT",
-              "SPOTTER_IMAGE=\($image) ENV_PARAM=\($param) AWS_REGION=\($region) bash deploy.sh"
+              "FITBOT_IMAGE=\($image) ENV_PARAM=\($param) AWS_REGION=\($region) bash deploy.sh"
             ], executionTimeout: ["600"]}')
 
           id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" \

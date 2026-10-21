@@ -10,7 +10,7 @@ data "aws_ssm_parameter" "al2023_arm64" {
 
 resource "aws_security_group" "app" {
   name_prefix = "${var.name}-"
-  description = "Spotter web ingress"
+  description = "Fitbot web ingress"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {

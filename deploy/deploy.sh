@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-: "${SPOTTER_IMAGE:?}" "${ENV_PARAM:?}" "${AWS_REGION:?}"
-export SPOTTER_IMAGE
+: "${FITBOT_IMAGE:?}" "${ENV_PARAM:?}" "${AWS_REGION:?}"
+export FITBOT_IMAGE
 
-cd /opt/spotter
+cd /opt/fitbot
 umask 077
 aws ssm get-parameter --region "$AWS_REGION" --name "$ENV_PARAM" --with-decryption \
   --query Parameter.Value --output text > .env.tmp
@@ -17,7 +17,7 @@ app=$(docker compose ps -q app)
 for _ in $(seq 1 30); do
   status=$(docker inspect -f '{{.State.Health.Status}}' "$app")
   if [ "$status" = healthy ]; then
-    echo "deployed $SPOTTER_IMAGE"
+    echo "deployed $FITBOT_IMAGE"
     docker image prune -f > /dev/null
     exit 0
   fi

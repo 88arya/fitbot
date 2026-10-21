@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/88arya/spotter/internal/agent"
-	"github.com/88arya/spotter/internal/config"
-	"github.com/88arya/spotter/internal/db"
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
-	"github.com/88arya/spotter/internal/server"
-	"github.com/88arya/spotter/internal/telnyx"
+	"github.com/88arya/fitbot/internal/agent"
+	"github.com/88arya/fitbot/internal/config"
+	"github.com/88arya/fitbot/internal/db"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
+	"github.com/88arya/fitbot/internal/server"
+	"github.com/88arya/fitbot/internal/telnyx"
 )
 
 var version = "dev"

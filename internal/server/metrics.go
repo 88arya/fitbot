@@ -7,19 +7,19 @@ import (
 
 var (
 	smsMessages = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "spotter_sms_messages_total",
+		Name: "fitbot_sms_messages_total",
 		Help: "Texts received and sent, by direction and result.",
 	}, []string{"direction", "result"})
 	smsDeliveries = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "spotter_sms_deliveries_total",
+		Name: "fitbot_sms_deliveries_total",
 		Help: "Final delivery status of outbound texts, as reported by Telnyx.",
 	}, []string{"status"})
 	smsCost = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "spotter_sms_cost_usd_total",
+		Name: "fitbot_sms_cost_usd_total",
 		Help: "What Telnyx reported charging for texts, in USD.",
 	}, []string{"direction"})
 	webhookEvents = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "spotter_webhook_events_total",
+		Name: "fitbot_webhook_events_total",
 		Help: "Telnyx webhooks, by event type and outcome.",
 	}, []string{"type", "outcome"})
 )

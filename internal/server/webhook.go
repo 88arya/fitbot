@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/88arya/spotter/internal/agent"
-	"github.com/88arya/spotter/internal/db"
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/telnyx"
+	"github.com/88arya/fitbot/internal/agent"
+	"github.com/88arya/fitbot/internal/db"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/telnyx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -115,7 +115,7 @@ func (s *SMS) handleDelivery(w http.ResponseWriter, r *http.Request, e telnyx.Ev
 	}
 	w.WriteHeader(http.StatusOK)
 	if n == 0 {
-		// Texts sent outside Spotter, like ones sent by hand from the API.
+		// Texts sent outside Fitbot, like ones sent by hand from the API.
 		slog.Debug("delivery report for unknown message", "id", e.ID)
 		webhookEvents.WithLabelValues(e.Type, "unknown_message").Inc()
 		return
@@ -155,8 +155,8 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 	s.send(ctx, user, text)
 }
 
-// Greet texts the intro to allowed senders Spotter has never texted, so setup
-// starts as soon as Spotter runs instead of waiting for their first text.
+// Greet texts the intro to allowed senders Fitbot has never texted, so setup
+// starts as soon as Fitbot runs instead of waiting for their first text.
 func (s *SMS) Greet(ctx context.Context) {
 	if s.Agent == nil {
 		return

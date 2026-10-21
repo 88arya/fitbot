@@ -16,15 +16,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/88arya/spotter/internal/agent"
-	"github.com/88arya/spotter/internal/db"
-	"github.com/88arya/spotter/internal/db/store"
-	"github.com/88arya/spotter/internal/llm"
-	"github.com/88arya/spotter/internal/telnyx"
+	"github.com/88arya/fitbot/internal/agent"
+	"github.com/88arya/fitbot/internal/db"
+	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
+	"github.com/88arya/fitbot/internal/telnyx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// fakes records what Spotter sent to Telnyx and OpenAI.
+// fakes records what Fitbot sent to Telnyx and OpenAI.
 type fakes struct {
 	mu       sync.Mutex
 	sends    []string
@@ -133,7 +133,7 @@ func (h *harness) text(id, body string) int {
 	}})
 }
 
-// waitSends waits until Spotter has sent n texts.
+// waitSends waits until Fitbot has sent n texts.
 func (h *harness) waitSends(n int) []string {
 	h.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

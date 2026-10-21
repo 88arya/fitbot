@@ -97,7 +97,7 @@ func (c *Client) Verify(h http.Header, body []byte, now time.Time) error {
 	return nil
 }
 
-// Event types Spotter handles. Telnyx sends message.sent and
+// Event types Fitbot handles. Telnyx sends message.sent and
 // message.finalized as delivery reports for outbound texts.
 const (
 	EventReceived  = "message.received"
@@ -105,7 +105,7 @@ const (
 	EventFinalized = "message.finalized"
 )
 
-// Event is the part of a messaging webhook Spotter uses.
+// Event is the part of a messaging webhook Fitbot uses.
 type Event struct {
 	Type string
 	// ID is Telnyx's message ID.

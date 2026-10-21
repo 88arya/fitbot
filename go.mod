@@ -1,4 +1,4 @@
-module github.com/88arya/spotter
+module github.com/88arya/fitbot
 
 go 1.27
 
