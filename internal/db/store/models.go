@@ -8,6 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Action struct {
+	ID         int64              `json:"id"`
+	UserID     int64              `json:"user_id"`
+	MessageID  int64              `json:"message_id"`
+	Tool       string             `json:"tool"`
+	Args       string             `json:"args"`
+	Occurrence int32              `json:"occurrence"`
+	Result     string             `json:"result"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type Delivery struct {
 	ID          int64              `json:"id"`
 	UserID      int64              `json:"user_id"`

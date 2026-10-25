@@ -71,6 +71,7 @@ func run() error {
 		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
 	} else if sms != nil {
 		sms.Agent = &agent.Agent{
+			Pool:            pool,
 			Store:           sms.Store,
 			LLM:             llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model, cfg.OpenAI.InputPrice, cfg.OpenAI.OutputPrice),
 			DefaultTimezone: cfg.DefaultTimezone.String(),

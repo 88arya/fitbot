@@ -15,6 +15,7 @@ import (
 	"github.com/88arya/fitbot/internal/db/store"
 	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -27,6 +28,8 @@ const (
 )
 
 type Agent struct {
+	// Pool runs each tool call in a transaction; Store uses the same database.
+	Pool            *pgxpool.Pool
 	Store           *store.Queries
 	LLM             *llm.Client
 	DefaultTimezone string
@@ -43,8 +46,9 @@ func (a *Agent) now() time.Time {
 
 // Reply returns the text to send back for in, the user's latest message,
 // which must already be stored. Tool calls along the way are applied to the
-// database. While setup is unfinished, the reply ends with the next setup
-// question.
+// database, each at most once per message, so running the same message
+// again does not repeat a change. While setup is unfinished, the reply ends
+// with the next setup question.
 func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (string, error) {
 	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen})
 	if err != nil {
@@ -70,6 +74,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 			convo = append(convo, llm.Message{Role: "assistant", Content: m.Body})
 		}
 	}
+	seen := map[string]int{}
 	for range maxRounds {
 		// The prompt is rebuilt each round so it shows changes made by tools.
 		user, err := a.Store.GetUser(ctx, userID)
@@ -91,7 +96,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		}
 		convo = append(convo, out)
 		for _, tc := range out.ToolCalls {
-			convo = append(convo, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: a.runTool(ctx, userID, tc)})
+			convo = append(convo, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: a.runTool(ctx, userID, in.ID, tc, seen)})
 		}
 	}
 	return "", errors.New("too many tool rounds without a reply")
@@ -101,7 +106,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (llm.Message, error) {
 	model := a.LLM.Model()
 	start := time.Now()
-	out, usage, err := a.LLM.Complete(ctx, msgs, tools)
+	out, usage, err := a.LLM.Complete(ctx, msgs, toolSpecs)
 	latency := time.Since(start)
 
 	call := store.InsertLLMCallParams{

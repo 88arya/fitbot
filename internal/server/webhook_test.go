@@ -102,6 +102,7 @@ func newHarness(t *testing.T) *harness {
 		Store:  q,
 		Telnyx: tc,
 		Agent: &agent.Agent{
+			Pool:            pool,
 			Store:           q,
 			LLM:             llm.New(openAI.URL, "key", "test-model", 1, 2),
 			DefaultTimezone: "America/Toronto",

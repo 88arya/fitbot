@@ -77,6 +77,7 @@ func newEnv(t *testing.T, script ...string) *env {
 	t.Cleanup(srv.Close)
 	q := store.New(pool)
 	return &env{t: t, ctx: ctx, q: q, llm: f, agent: &Agent{
+		Pool:            pool,
 		Store:           q,
 		LLM:             llm.New(srv.URL, "key", "test-model", 1, 2),
 		DefaultTimezone: "America/Toronto",
