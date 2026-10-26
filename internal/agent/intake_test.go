@@ -27,12 +27,13 @@ func logged(t *testing.T, s *sim.Sim, body string, calls ...string) []string {
 // intake builds log_intake arguments: calories, and any other fields as
 // "name":value pairs.
 func intake(cal string, fields ...string) string {
-	args := map[string]string{"calories": cal, "protein": "null", "carbs": "null", "fat": "null", "date": "null"}
+	args := map[string]string{"calories": cal, "protein": "null", "carbs": "null", "fat": "null", "water": "null",
+		"water_unit": "null", "date": "null"}
 	for i := 0; i < len(fields); i += 2 {
 		args[fields[i]] = fields[i+1]
 	}
-	return fmt.Sprintf(`{"calories":%s,"protein":%s,"carbs":%s,"fat":%s,"date":%s}`,
-		args["calories"], args["protein"], args["carbs"], args["fat"], args["date"])
+	return fmt.Sprintf(`{"calories":%s,"protein":%s,"carbs":%s,"fat":%s,"water":%s,"water_unit":%s,"date":%s}`,
+		args["calories"], args["protein"], args["carbs"], args["fat"], args["water"], args["water_unit"], args["date"])
 }
 
 // TestIntakeDay logs, edits, and deletes a day of calories and protein,
@@ -80,7 +81,7 @@ func TestIntakeDay(t *testing.T) {
 	}
 	snackID := s.Rows(`SELECT max(id) FROM intake_logs`)[0]
 	results = logged(t, s, "no wait that was 900",
-		"edit_log", `{"type":"calories","id":null,"amount":900,"date":null}`)
+		"edit_log", `{"type":"calories","id":null,"amount":900,"unit":null,"date":null}`)
 	want = "updated #" + snackID + ": now 900 cal today. calories: 1,250 / 1,800 cal today, 550 cal to go; " +
 		"protein: 30 / 150 g today, 120 g to go."
 	if fmt.Sprint(results) != "["+want+"]" {
@@ -173,7 +174,7 @@ func TestIntakeDays(t *testing.T) {
 		t.Errorf("log yesterday = %q", r)
 	}
 	id := s.Rows(`SELECT max(id) FROM intake_logs`)[0]
-	r = logged(t, s, "actually that was saturday", "edit_log", `{"type":"calories","id":null,"amount":null,"date":"2026-10-24"}`)
+	r = logged(t, s, "actually that was saturday", "edit_log", `{"type":"calories","id":null,"amount":null,"unit":null,"date":"2026-10-24"}`)
 	want := "updated #" + id + ": now 2,100 cal on Oct 24. calories: 2,100 / 2,000 cal on Oct 24, 100 cal over. " +
 		"calories: 0 / 2,000 cal yesterday, 2,000 cal to go."
 	if fmt.Sprint(r) != "["+want+"]" {
@@ -184,7 +185,7 @@ func TestIntakeDays(t *testing.T) {
 		t.Errorf("undo move = %q", reply)
 	}
 	// An edit that changes nothing doesn't claim the amount moved.
-	logged(t, s, "it was 2100", "edit_log", `{"type":"calories","id":null,"amount":2100,"date":null}`)
+	logged(t, s, "it was 2100", "edit_log", `{"type":"calories","id":null,"amount":2100,"unit":null,"date":null}`)
 	if reply := s.Text("undo"); reply != "Undid changing 2,100 cal to 2,100 cal. Calories: 2,100 / 2,000 cal yesterday, 100 cal over." {
 		t.Errorf("undo no-op edit = %q", reply)
 	}
@@ -200,10 +201,10 @@ func TestIntakeDays(t *testing.T) {
 		"log_intake", intake("100", "protein", "2000"),
 		"log_intake", intake("null", "protein", "30"),
 		"log_intake", intake("null"),
-		"edit_log", `{"type":"water","id":null,"amount":1,"date":null}`,
-		"edit_log", `{"type":"calories","id":null,"amount":null,"date":null}`,
-		"edit_log", `{"type":"calories","id":999999999,"amount":1,"date":null}`,
-		"edit_log", `{"type":"protein","id":`+id+`,"amount":1,"date":null}`,
+		"edit_log", `{"type":"steps","id":null,"amount":1,"unit":null,"date":null}`,
+		"edit_log", `{"type":"calories","id":null,"amount":null,"unit":null,"date":null}`,
+		"edit_log", `{"type":"calories","id":999999999,"amount":1,"unit":null,"date":null}`,
+		"edit_log", `{"type":"protein","id":`+id+`,"amount":1,"unit":null,"date":null}`,
 		"delete_log", `{"type":"calories","id":999999999}`,
 		"delete_log", `{"type":"protein","id":null}`,
 	)
@@ -217,7 +218,7 @@ func TestIntakeDays(t *testing.T) {
 		"error: protein must be at most 1,000 g per entry",
 		"error: the user doesn't track protein, so nothing was logged",
 		"error: no amounts given",
-		`error: unknown log type "water"`,
+		`error: unknown log type "steps"`,
 		"error: no changes given",
 		"error: no entry #999999999",
 		"error: #" + id + " is calories, not protein",
@@ -342,5 +343,124 @@ func TestUndoDuringSetup(t *testing.T) {
 	}
 	if reply := s.Text("undo"); reply != "Undid setting your name to Sam. What should I call you?" {
 		t.Errorf("undo = %q", reply)
+	}
+}
+
+// TestWater logs water by bare amounts without the LLM and through
+// log_intake, edits and undoes it, and checks the daily total in each unit.
+func TestWater(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Toronto")
+	s := sim.New(t, time.Date(2026, 10, 26, 9, 0, 0, 0, loc))
+	if _, err := s.Pool.Exec(s.Ctx, `UPDATE goals SET value = 2000 WHERE user_id = $1 AND metric = 'water'`, s.UserID); err != nil {
+		t.Fatal(err)
+	}
+
+	llmCalls := len(s.Requests())
+	for _, c := range []struct{ in, want string }{
+		{"500ml", "Logged 500 ml water. Water: 500 ml / 2 L today, 1.5 L to go."},
+		{"1 L", "Logged 1 L water. Water: 1.5 / 2 L today, 500 ml to go."},
+	} {
+		if reply := s.Text(c.in); reply != c.want {
+			t.Errorf("%q: reply = %q, want %q", c.in, reply, c.want)
+		}
+	}
+	// A retried webhook and a rerun of the same text log nothing more.
+	s.Retry()
+	if reply := s.Rerun(); reply != "Logged 1 L water. Water: 1.5 / 2 L today, 500 ml to go." {
+		t.Errorf("rerun = %q", reply)
+	}
+	if reply := s.Text("16 oz."); reply != "Logged 473 ml water. Water: 1.97 / 2 L today, 27 ml to go." {
+		t.Errorf("16 oz = %q", reply)
+	}
+	for _, c := range []struct{ in, want string }{
+		{"0ml", "Couldn't log that: water must be more than 0."},
+		{"6L", "Couldn't log that: water must be at most 5 L per entry."},
+	} {
+		if reply := s.Text(c.in); reply != c.want {
+			t.Errorf("%q: reply = %q, want %q", c.in, reply, c.want)
+		}
+	}
+	if n := len(s.Requests()); n != llmCalls {
+		t.Errorf("bare amounts made %d LLM calls", n-llmCalls)
+	}
+	if got := s.Rows(`SELECT amount FROM intake_logs WHERE metric = 'water' ORDER BY id`); fmt.Sprint(got) != "[500 1000 473]" {
+		t.Fatalf("water logs = %v", got)
+	}
+
+	// Water and calories in one call, in the unit the user gave.
+	r := logged(t, s, "2 litres of water and 400 cal", "log_intake", intake("400", "water", "2", "water_unit", `"l"`))
+	if len(r) != 1 || !strings.HasSuffix(r[0], " today. calories: 400 cal today; water: 3.97 / 2 L today, goal hit.") ||
+		!strings.Contains(r[0], ", 2 L water (#") {
+		t.Errorf("log_intake water = %q", r)
+	}
+	r = logged(t, s, "no, that water was 750ml", "edit_log", `{"type":"water","id":null,"amount":750,"unit":"ml","date":null}`)
+	if len(r) != 1 || !strings.HasSuffix(r[0], ": now 750 ml water today. calories: 400 cal today; water: 2.72 / 2 L today, goal hit.") {
+		t.Errorf("edit water = %q", r)
+	}
+	for _, w := range []string{
+		"Undid changing 2 L water to 750 ml water. Water: 3.97 / 2 L today, goal hit.",
+		"Undid logging 400 cal and 2 L water. Calories: 0 cal today. Water: 1.97 / 2 L today, 27 ml to go.",
+		"Undid logging 473 ml water. Water: 1.5 / 2 L today, 500 ml to go.",
+	} {
+		if reply := s.Text("undo"); reply != w {
+			t.Errorf("undo = %q\nwant %q", reply, w)
+		}
+	}
+
+	// Anything more than a bare amount goes to the LLM.
+	n := len(s.Requests())
+	s.Text("500ml and 300 cal")
+	if len(s.Requests()) == n {
+		t.Error("a text with more than a water amount skipped the LLM")
+	}
+
+	// Bare amounts still log without an LLM configured.
+	model := s.Agent.LLM
+	s.Agent.LLM = nil
+	if reply := s.Text("250 ml"); reply != "Logged 250 ml water. Water: 1.75 / 2 L today, 250 ml to go." {
+		t.Errorf("without LLM = %q", reply)
+	}
+	s.Agent.LLM = model
+
+	r = logged(t, s, "x",
+		"log_intake", intake("null", "water", "2", "water_unit", `"g"`),
+		"log_intake", intake("100", "water_unit", `"l"`),
+		"edit_log", `{"type":"water","id":null,"amount":5,"unit":"cal","date":null}`,
+		"edit_log", `{"type":"water","id":null,"amount":null,"unit":"l","date":null}`,
+		"edit_log", `{"type":"water","id":null,"amount":null,"unit":"l","date":"2026-10-26"}`,
+	)
+	for _, w := range []string{
+		"error: g is not a unit for water; use ml or l or oz",
+		"error: water_unit given without water",
+		"error: cal is not a unit for water; use ml or l or oz",
+		"error: no changes given",
+		"error: unit given without amount",
+	} {
+		if len(r) == 0 || !strings.HasPrefix(r[0], w) {
+			t.Errorf("result = %q, want %q", r, w)
+			break
+		}
+		r = r[1:]
+	}
+}
+
+// TestBareAmountDuringSetup checks a bare amount during setup goes to the
+// LLM, since it answers the water goal question rather than logging water.
+func TestBareAmountDuringSetup(t *testing.T) {
+	s := sim.New(t, time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC))
+	if _, err := s.Pool.Exec(s.Ctx, `DELETE FROM goals WHERE metric = 'water'`); err != nil {
+		t.Fatal(err)
+	}
+	// The first text from a user mid-setup gets the intro.
+	s.Text("hi")
+	s.Script(sim.Call("set_goals", `{"goals":[{"metric":"water","value":2,"unit":"l"}]}`), sim.Say("Got it."))
+	if reply := s.Text("2L"); !strings.HasPrefix(reply, "Got it. ") {
+		t.Errorf("reply = %q", reply)
+	}
+	if got := s.Rows(`SELECT count(*) FROM intake_logs`); fmt.Sprint(got) != "[0]" {
+		t.Errorf("intake logs = %v", got)
+	}
+	if got := s.Rows(`SELECT value FROM goals WHERE metric = 'water'`); fmt.Sprint(got) != "[2000]" {
+		t.Errorf("water goal = %v", got)
 	}
 }

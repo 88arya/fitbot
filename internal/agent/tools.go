@@ -98,13 +98,16 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name: "log_intake",
-			Description: "Add amounts the user ate to their daily totals, using only the amounts they gave. Never estimate: " +
+			Description: "Add amounts the user ate or drank to their daily totals, using only the amounts they gave. Never estimate: " +
 				"if they gave no amount, don't call this; ask for one. Protein, carbs, and fat are logged only if the user tracks them.",
 			Parameters: object(map[string]any{
 				"calories": map[string]any{"type": []string{"number", "null"}, "description": "Calories (kcal), or null if not given."},
 				"protein":  map[string]any{"type": []string{"number", "null"}, "description": "Grams of protein, or null if not given."},
 				"carbs":    map[string]any{"type": []string{"number", "null"}, "description": "Grams of carbs, or null if not given."},
 				"fat":      map[string]any{"type": []string{"number", "null"}, "description": "Grams of fat, or null if not given."},
+				"water":    map[string]any{"type": []string{"number", "null"}, "description": "Water in water_unit, or null if not given."},
+				"water_unit": map[string]any{"type": []string{"string", "null"}, "enum": []any{"ml", "l", "oz", nil},
+					"description": "The unit the user gave water in; null for ml."},
 				"date": map[string]any{"type": []string{"string", "null"},
 					"description": "The user's local day it counts toward, YYYY-MM-DD, when they name one like \"yesterday\". null for today."},
 			}),
@@ -118,7 +121,9 @@ var tools = []tool{
 			Parameters: object(map[string]any{
 				"type":   map[string]any{"type": "string", "enum": intakeMetrics},
 				"id":     map[string]any{"type": []string{"integer", "null"}, "description": "The amount's id, or null for the most recent of this type."},
-				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in cal or g."},
+				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in unit."},
+				"unit": map[string]any{"type": []string{"string", "null"}, "enum": intakeUnits,
+					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water. null means cal, g, or ml."},
 				"date": map[string]any{"type": []string{"string", "null"},
 					"description": "Move the amount to this local day, YYYY-MM-DD, like when the user says it was yesterday."},
 			}),

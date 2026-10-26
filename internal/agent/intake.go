@@ -2,39 +2,58 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // intakeMetrics are what log_intake adds to daily totals, calories first.
-// Calories are always tracked; protein, carbs, and fat only when the user
-// has a goal for them.
-var intakeMetrics = []string{"calories", "protein", "carbs", "fat"}
+// Calories and water are always tracked; protein, carbs, and fat only when
+// the user has a goal for them.
+var intakeMetrics = []string{"calories", "protein", "carbs", "fat", "water"}
 
 // maxIntake bounds one logged amount, in canonical units.
-var maxIntake = map[string]int{"calories": 10000, "protein": 1000, "carbs": 1000, "fat": 1000}
+var maxIntake = map[string]int{"calories": 10000, "protein": 1000, "carbs": 1000, "fat": 1000, "water": 5000}
+
+// intakeUnits are the units edit_log takes, plus null for the canonical one.
+var intakeUnits = []any{"cal", "g", "ml", "l", "oz", nil}
 
 // backfillDays is how far back a log or edit may date an amount.
 const backfillDays = 30
 
 type intakeArgs struct {
-	Calories *float64 `json:"calories"`
-	Protein  *float64 `json:"protein"`
-	Carbs    *float64 `json:"carbs"`
-	Fat      *float64 `json:"fat"`
-	Date     *string  `json:"date"`
+	Calories  *float64 `json:"calories"`
+	Protein   *float64 `json:"protein"`
+	Carbs     *float64 `json:"carbs"`
+	Fat       *float64 `json:"fat"`
+	Water     *float64 `json:"water"`
+	WaterUnit *string  `json:"water_unit"`
+	Date      *string  `json:"date"`
 }
 
 func (a *Agent) logIntake(ctx context.Context, c *call, args intakeArgs) (string, error) {
 	given := map[string]*float64{"calories": args.Calories, "protein": args.Protein, "carbs": args.Carbs, "fat": args.Fat}
+	if args.Water != nil {
+		water, _ := metricByName("water")
+		v, errText := inUnit(water, *args.Water, args.WaterUnit)
+		if errText != "" {
+			return "error: " + errText, nil
+		}
+		given["water"] = &v
+	} else if args.WaterUnit != nil {
+		return "error: water_unit given without water", nil
+	}
 	user, err := c.q.GetUser(ctx, c.userID)
 	if err != nil {
 		return "", err
@@ -121,32 +140,50 @@ func (a *Agent) logIntake(ctx context.Context, c *call, args intakeArgs) (string
 	return result, nil
 }
 
-// trackedMetrics reports which intake metrics the user tracks: calories
-// always, and each macro with a goal set.
+// trackedMetrics reports which intake metrics the user tracks: calories and
+// water always, and each macro with a goal set.
 func trackedMetrics(ctx context.Context, q *store.Queries, userID int64) (map[string]bool, error) {
 	goals, err := q.LatestGoals(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	tracked := map[string]bool{"calories": true}
+	tracked := map[string]bool{"calories": true, "water": true}
 	for _, g := range goals {
-		if g.Value.Valid && g.Metric != "calories" {
+		if g.Value.Valid {
 			tracked[g.Metric] = true
 		}
 	}
 	return tracked, nil
 }
 
+// inUnit converts v in unit to m's canonical unit, or returns why not. A nil
+// unit means the canonical unit.
+func inUnit(m metric, v float64, unit *string) (float64, string) {
+	if unit == nil {
+		return v, ""
+	}
+	u := strings.ToLower(strings.TrimSpace(*unit))
+	size, ok := m.units[u]
+	if !ok {
+		return 0, fmt.Sprintf("%s is not a unit for %s; use %s", u, m.name, strings.Join(m.unitOrder, " or "))
+	}
+	return v * size, ""
+}
+
 type editLogArgs struct {
 	Type   string   `json:"type"`
 	ID     *int64   `json:"id"`
 	Amount *float64 `json:"amount"`
+	Unit   *string  `json:"unit"`
 	Date   *string  `json:"date"`
 }
 
 func (a *Agent) editLog(ctx context.Context, c *call, args editLogArgs) (string, error) {
 	if args.Amount == nil && args.Date == nil {
 		return "error: no changes given", nil
+	}
+	if args.Amount == nil && args.Unit != nil {
+		return "error: unit given without amount", nil
 	}
 	old, m, errText, err := a.targetIntake(ctx, c, args.Type, args.ID)
 	if errText != "" || err != nil {
@@ -159,7 +196,11 @@ func (a *Agent) editLog(ctx context.Context, c *call, args editLogArgs) (string,
 	today := a.localDate(user)
 	amount, day := old.Amount, old.LocalDate
 	if args.Amount != nil {
-		if amount, errText = intakeAmount(m, *args.Amount); errText != "" {
+		v, errText := inUnit(m, *args.Amount, args.Unit)
+		if errText != "" {
+			return "error: " + errText, nil
+		}
+		if amount, errText = intakeAmount(m, v); errText != "" {
 			return "error: " + errText, nil
 		}
 	}
@@ -285,7 +326,8 @@ func entryDate(s string, today pgtype.Date) (pgtype.Date, string) {
 	return day, ""
 }
 
-// intakeSummary shows an amount, like "350 cal" or "30 g protein".
+// intakeSummary shows an amount, like "350 cal", "30 g protein", or "500 ml
+// water".
 func intakeSummary(m metric, amount int32) string {
 	s := m.format(int(amount))
 	if m.name != "calories" {
@@ -301,7 +343,7 @@ type statusLine struct {
 }
 
 // intakeDay is a day's totals against the goals in force that day: calories
-// always, then each macro with a goal or anything logged.
+// always, then each macro, and water, with a goal or anything logged.
 type intakeDay struct {
 	lines []statusLine
 }
@@ -414,11 +456,61 @@ func (a *Agent) intakeSection(ctx context.Context, user store.User) (string, err
 		fmt.Fprintf(&b, "#%d at %s: %s\n", l.ID, l.LoggedAt.Time.In(loc).Format("3:04 PM"), intakeSummary(m, l.Amount))
 	}
 	b.WriteString("Totals: " + st.forModel() + "\n")
-	b.WriteString("Add what the user ate to today's totals with log_intake, using only the amounts they gave: calories " +
-		"always, and protein, carbs, or fat only if the user tracks them (has a goal). If they say they ate something " +
-		"without a calorie amount, ask how many calories it was; never estimate or look one up. Amounts count toward " +
-		"today unless the user names another day. Reply to a log with the totals in the tool result, like \"Logged 350 " +
-		"cal. 1,240 / 1,800 cal today, 560 cal to go.\" Fix an amount with edit_log and remove one with delete_log, by its " +
-		"id above or null for the most recent of that type. The user can text \"undo\" to reverse their last change.\n")
+	b.WriteString("Add what the user ate and drank to today's totals with log_intake, using only the amounts they gave: " +
+		"calories and water always, and protein, carbs, or fat only if the user tracks them (has a goal). Pass water in the " +
+		"unit the user said. If they say they ate or drank something without an amount, ask how much it was; never " +
+		"estimate or look one up. Amounts count toward today unless the user names another day. Reply to a log with the " +
+		"totals in the tool result, like \"Logged 350 cal. 1,240 / 1,800 cal today, 560 cal to go.\" Fix an amount with " +
+		"edit_log and remove one with delete_log, by its id above or null for the most recent of that type. The user can " +
+		"text \"undo\" to reverse their last change, or a bare amount like \"500ml\" to log water.\n")
 	return b.String(), nil
+}
+
+// bareWater matches a text that is only an amount of water, like "500ml",
+// "1.5 L", or "16 oz", which logs water without the LLM.
+var bareWater = regexp.MustCompile(`(?i)^\s*\+?(\d+(?:\.\d+)?)\s*(ml|l|oz|litres?|liters?)\s*[.!]?\s*$`)
+
+// waterAmount returns the amount and unit of a bare water amount.
+func waterAmount(body string) (float64, string, bool) {
+	m := bareWater.FindStringSubmatch(body)
+	if m == nil {
+		return 0, "", false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, "", false
+	}
+	unit := strings.ToLower(m[2])
+	if strings.HasPrefix(unit, "lit") {
+		unit = "l"
+	}
+	return v, unit, true
+}
+
+// logWater logs a bare water amount through log_intake, so it is recorded
+// and undone like any other call, and words the reply in code.
+func (a *Agent) logWater(ctx context.Context, userID, msgID int64, v float64, unit string) (string, error) {
+	args, err := json.Marshal(map[string]any{"calories": nil, "protein": nil, "carbs": nil, "fat": nil,
+		"water": v, "water_unit": unit, "date": nil})
+	if err != nil {
+		return "", err
+	}
+	tc := llm.ToolCall{ID: "fast_path", Type: "function"}
+	tc.Function.Name = "log_intake"
+	tc.Function.Arguments = string(args)
+	result := a.runTool(ctx, userID, msgID, tc, map[string]int{})
+	if errText, failed := strings.CutPrefix(result, "error: "); failed {
+		return "Couldn't log that: " + errText + ".", nil
+	}
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	water, _ := metricByName("water")
+	canonical, _ := inUnit(water, v, &unit)
+	st, err := a.dayStatus(ctx, a.Store, user, a.localDate(user))
+	if err != nil {
+		return "", err
+	}
+	return "Logged " + intakeSummary(water, int32(math.Round(canonical))) + ". " + st.forUser([]string{"water"}), nil
 }

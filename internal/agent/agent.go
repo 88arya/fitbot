@@ -74,10 +74,9 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	if len(history) == 1 && wasMissing {
 		return Intro(), nil
 	}
-	if isUndo(in.Body) {
-		reply, err := a.undo(ctx, userID, in.ID)
+	if reply, ok, err := a.fastPath(ctx, userID, in, wasMissing); err != nil || ok {
 		if err != nil {
-			return "", fmt.Errorf("undoing: %w", err)
+			return "", err
 		}
 		state, err := a.setupState(ctx, userID)
 		if err != nil {
@@ -159,6 +158,28 @@ func (a *Agent) location(user store.User) *time.Location {
 func (a *Agent) localDate(user store.User) pgtype.Date {
 	y, m, d := a.now().In(a.location(user)).Date()
 	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}
+}
+
+// fastPath answers texts that need no LLM, like "undo" and a bare water
+// amount, and reports whether it did. During setup a bare amount is more
+// likely an answer to a goal question, like "2L" for the water goal, so it
+// goes to the LLM instead.
+func (a *Agent) fastPath(ctx context.Context, userID int64, in store.Message, inSetup bool) (string, bool, error) {
+	if isUndo(in.Body) {
+		reply, err := a.undo(ctx, userID, in.ID)
+		if err != nil {
+			return "", true, fmt.Errorf("undoing: %w", err)
+		}
+		return reply, true, nil
+	}
+	if v, unit, ok := waterAmount(in.Body); ok && !inSetup {
+		reply, err := a.logWater(ctx, userID, in.ID, v, unit)
+		if err != nil {
+			return "", true, fmt.Errorf("logging water: %w", err)
+		}
+		return reply, true, nil
+	}
+	return "", false, nil
 }
 
 // micros converts a time of day to time since midnight.

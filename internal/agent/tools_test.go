@@ -32,3 +32,24 @@ func TestIsUndo(t *testing.T) {
 		}
 	}
 }
+
+func TestWaterAmount(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		v    float64
+		unit string
+	}{
+		{"500ml", 500, "ml"}, {" 500 ML ", 500, "ml"}, {"1.5L", 1.5, "l"}, {"1 litre", 1, "l"},
+		{"2 liters!", 2, "l"}, {"16 oz.", 16, "oz"}, {"+250ml", 250, "ml"},
+	} {
+		v, unit, ok := waterAmount(c.in)
+		if !ok || v != c.v || unit != c.unit {
+			t.Errorf("waterAmount(%q) = %v %q %v", c.in, v, unit, ok)
+		}
+	}
+	for _, in := range []string{"", "500", "500 cal", "drank 500ml", "500ml and 300 cal", "ml", "1,000ml", "5 lbs"} {
+		if _, _, ok := waterAmount(in); ok {
+			t.Errorf("waterAmount(%q) matched", in)
+		}
+	}
+}
