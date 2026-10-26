@@ -1,5 +1,5 @@
 // Package agent turns a user's text into a reply, using the LLM and tools
-// that update the user's profile and memory.
+// that update the user's profile, goals, and memory.
 package agent
 
 import (
@@ -14,6 +14,7 @@ import (
 	"github.com/88arya/fitbot/internal/db"
 	"github.com/88arya/fitbot/internal/db/store"
 	"github.com/88arya/fitbot/internal/llm"
+	"github.com/88arya/fitbot/internal/scheduler"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -33,6 +34,8 @@ type Agent struct {
 	Store           *store.Queries
 	LLM             *llm.Client
 	DefaultTimezone string
+	// CalorieFloor is the lowest daily calorie goal accepted; zero means 1,200.
+	CalorieFloor int
 	// Now returns the current time; nil means time.Now. Tests set it.
 	Now func() time.Time
 }
@@ -54,11 +57,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	if err != nil {
 		return "", fmt.Errorf("loading history: %w", err)
 	}
-	user, err := a.Store.GetUser(ctx, userID)
+	state, err := a.setupState(ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("loading user: %w", err)
+		return "", err
 	}
-	wasMissing := len(missingFields(user)) > 0
+	wasMissing := len(missingFields(state)) > 0
 	// A user who texts before Fitbot has greeted them gets the intro, so
 	// setup starts the same way either way.
 	if len(history) == 1 && wasMissing {
@@ -77,22 +80,22 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	seen := map[string]int{}
 	for range maxRounds {
 		// The prompt is rebuilt each round so it shows changes made by tools.
-		user, err := a.Store.GetUser(ctx, userID)
+		state, err := a.setupState(ctx, userID)
 		if err != nil {
-			return "", fmt.Errorf("loading user: %w", err)
+			return "", err
 		}
 		memories, err := a.Store.ListMemories(ctx, userID)
 		if err != nil {
 			return "", fmt.Errorf("loading memories: %w", err)
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(user, memories)}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
 			return "", err
 		}
 		if len(out.ToolCalls) == 0 {
-			return withSetup(out.Content, user, wasMissing), nil
+			return withSetup(out.Content, state, wasMissing), nil
 		}
 		convo = append(convo, out)
 		for _, tc := range out.ToolCalls {
@@ -100,6 +103,42 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		}
 	}
 	return "", errors.New("too many tool rounds without a reply")
+}
+
+func (a *Agent) setupState(ctx context.Context, userID int64) (setupState, error) {
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return setupState{}, fmt.Errorf("loading user: %w", err)
+	}
+	goals, err := a.Store.LatestGoals(ctx, userID)
+	if err != nil {
+		return setupState{}, fmt.Errorf("loading goals: %w", err)
+	}
+	return setupState{user: user, goals: goalsByMetric(goals)}, nil
+}
+
+// location is the user's timezone, or the default until they give one.
+func (a *Agent) location(user store.User) *time.Location {
+	tz := a.DefaultTimezone
+	if user.Timezone.Valid {
+		tz = user.Timezone.String
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
+// localDate is the user's current local day.
+func (a *Agent) localDate(user store.User) pgtype.Date {
+	y, m, d := a.now().In(a.location(user)).Date()
+	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}
+}
+
+// clock formats a time of day, given as time since midnight, in layout.
+func clock(tod time.Duration, layout string) string {
+	return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Add(tod).Format(layout)
 }
 
 // complete makes one LLM call and records it.
@@ -148,33 +187,63 @@ func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (l
 const basePrompt = `You are Fitbot, a health and fitness assistant that texts with people over SMS.
 Keep replies short and plain: one or two sentences, no markdown, no emoji.`
 
-func (a *Agent) systemPrompt(user store.User, memories []store.Memory) string {
+func (a *Agent) systemPrompt(s setupState, memories []store.Memory) string {
 	var b strings.Builder
 	b.WriteString(basePrompt)
+	user := s.user
 
-	tz := a.DefaultTimezone
-	var missing []string
 	b.WriteString("\n\n## Profile\n")
 	if user.Name.Valid {
 		fmt.Fprintf(&b, "name: %s\n", user.Name.String)
 	} else {
 		b.WriteString("name: missing\n")
-		missing = append(missing, "name")
 	}
 	if user.Timezone.Valid {
-		tz = user.Timezone.String
-		fmt.Fprintf(&b, "timezone: %s\n", tz)
+		fmt.Fprintf(&b, "timezone: %s\n", user.Timezone.String)
 	} else {
-		fmt.Fprintf(&b, "timezone: missing (times below assume %s)\n", tz)
-		missing = append(missing, "timezone")
+		fmt.Fprintf(&b, "timezone: missing (times below assume %s)\n", a.DefaultTimezone)
 	}
-	if len(missing) > 0 {
+	for _, t := range []struct {
+		name string
+		set  bool
+		at   time.Duration
+	}{
+		{"wake time", user.WakeTime.Valid, scheduler.WakeTime(user)},
+		{"bedtime", user.Bedtime.Valid, scheduler.Bedtime(user)},
+	} {
+		if t.set {
+			fmt.Fprintf(&b, "%s: %s\n", t.name, clock(t.at, "3:04 PM"))
+		} else {
+			fmt.Fprintf(&b, "%s: missing (check-ins assume %s)\n", t.name, clock(t.at, "3:04 PM"))
+		}
+	}
+	if missing := missingFields(s); len(missing) > 0 {
+		var labels []string
+		for _, f := range missing {
+			labels = append(labels, f.label)
+		}
 		fmt.Fprintf(&b, "\nSetup is in progress. Still missing: %s. If the conversation gives any of these, save them "+
-			"with set_profile. Convert a city or region to its IANA timezone. Do not ask for missing fields yourself: "+
-			"the next setup question is added after your reply. If the user only answered a setup question, "+
-			"reply with a brief acknowledgement like \"Got it.\"\n", strings.Join(missing, ", "))
+			"with set_profile or set_goals. Convert a city or region to its IANA timezone. If the user says \"none\" "+
+			"or doesn't want to track a goal, save it with value null. If they don't know their wake time or bedtime, "+
+			"save the default: wake time %s, bedtime %s. Do not ask for missing fields yourself: the next setup question is added after your reply. "+
+			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\"\n",
+			strings.Join(labels, "; "), clock(scheduler.DefaultWake, "15:04"), clock(scheduler.DefaultBedtime, "15:04"))
 	}
-	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile.\n")
+	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile. " +
+		"The morning check-in is sent at the wake time.\n")
+
+	b.WriteString("\n## Goals\n")
+	for _, m := range metrics {
+		if g, ok := s.goals[m.name]; ok {
+			b.WriteString(m.describe(g) + "\n")
+		} else {
+			b.WriteString(m.label + ": not set\n")
+		}
+	}
+	fmt.Fprintf(&b, "Daily goals count against the user's local day. Save new or changed goals with set_goals; a change "+
+		"starts today, and earlier days keep the goal they had. Never make up a goal the user didn't give. Fitbot does "+
+		"not set a calorie goal below %s a day. Show amounts in cal, ml or L, g, hours, and lbs.\n",
+		metrics[0].format(a.calorieFloor()))
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {
@@ -184,13 +253,10 @@ func (a *Agent) systemPrompt(user store.User, memories []store.Memory) string {
 		fmt.Fprintf(&b, "#%d %s\n", m.ID, m.Fact)
 	}
 	fmt.Fprintf(&b, "Save lasting facts worth knowing later (training, diet, sleep, injuries, goals, routines, preferences) with remember. "+
-		"Skip small talk and anything already in the profile. If a fact changes or replaces one above, call update_memory "+
+		"Skip small talk and anything already in the profile or goals. If a fact changes or replaces one above, call update_memory "+
 		"with its id instead of remember. Call forget when a fact stops being true or the user asks. At most %d facts.\n", maxMemories)
 
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := a.location(user)
 	fmt.Fprintf(&b, "\n## Time\nThe user's local time is %s (%s).",
 		a.now().In(loc).Format("Monday, January 2, 2006, 3:04 PM"), loc)
 	return b.String()

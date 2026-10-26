@@ -128,6 +128,25 @@ func (e *env) text(user store.User, body string) (store.User, string, error) {
 	return user, reply, err
 }
 
+// goals returns the user's latest goals as metric=value pairs, null for
+// metrics not tracked.
+func (e *env) goals(userID int64) string {
+	e.t.Helper()
+	gs, err := e.q.LatestGoals(e.ctx, userID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var out []string
+	for _, g := range gs {
+		v := "null"
+		if g.Value.Valid {
+			v = fmt.Sprint(g.Value.Int32)
+		}
+		out = append(out, g.Metric+"="+v)
+	}
+	return strings.Join(out, " ")
+}
+
 func (e *env) memories(userID int64) []string {
 	e.t.Helper()
 	ms, err := e.q.ListMemories(e.ctx, userID)
@@ -148,7 +167,7 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 		`{"role":"assistant","content":"Nice to meet you, Arya."}`,
 	)
 	user, reply, err := e.text(store.User{}, "I'm Arya, a doctor in Vancouver")
-	if err != nil || reply != "Nice to meet you, Arya. "+setupDone {
+	if err != nil || reply != "Nice to meet you, Arya. "+question(2) {
 		t.Fatalf("reply=%q err=%v", reply, err)
 	}
 
@@ -173,8 +192,8 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 			t.Errorf("system prompt lacks %q:\n%s", want, sys)
 		}
 	}
-	if strings.Contains(sys, "Still missing") {
-		t.Errorf("complete profile still asks for fields:\n%s", sys)
+	if !strings.Contains(sys, "Still missing: wake time and bedtime;") {
+		t.Errorf("prompt should only be missing the steps after timezone:\n%s", sys)
 	}
 	var results []string
 	for _, m := range second {
@@ -187,21 +206,38 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	}
 }
 
+// question is setup step i's question for a user who has answered none of it.
+func question(i int) string {
+	return fields[i].question(setupState{})
+}
+
 func TestSetup(t *testing.T) {
+	gotIt := `{"role":"assistant","content":"Got it."}`
 	e := newEnv(t,
-		calls("set_profile", `{"name":"Arya","timezone":null}`),
-		`{"role":"assistant","content":"Got it."}`,
+		calls("set_profile", `{"name":"Arya","timezone":null,"wake_time":null,"bedtime":null}`), gotIt,
 		`{"role":"assistant","content":"I'm here to keep you on track."}`,
-		calls("set_profile", `{"name":null,"timezone":"America/Toronto"}`),
-		`{"role":"assistant","content":"Got it."}`,
+		calls("set_profile", `{"name":null,"timezone":"America/Toronto","wake_time":null,"bedtime":null}`), gotIt,
+		calls("set_profile", `{"name":null,"timezone":null,"wake_time":"6:30","bedtime":null}`), gotIt,
+		calls("set_profile", `{"name":null,"timezone":null,"wake_time":null,"bedtime":"23:00"}`), gotIt,
+		calls("set_goals", `{"goals":[{"metric":"water","value":3,"unit":"l"}]}`), gotIt,
+		calls("set_goals", `{"goals":[{"metric":"calories","value":2200,"unit":null},{"metric":"protein","value":160,"unit":"g"}]}`), gotIt,
+		calls("set_goals", `{"goals":[{"metric":"sleep","value":null,"unit":null}]}`), gotIt,
+		calls("set_goals", `{"goals":[{"metric":"weight","value":null,"unit":null}]}`), gotIt,
 		`{"role":"assistant","content":"Hey Arya."}`,
 	)
 	user := e.newUser()
 	for _, step := range []struct{ in, want string }{
-		{"Arya", "Got it. " + fields[1].question},
+		{"Arya", "Got it. " + question(1)},
 		// An off-topic text is answered, and the same question asked again.
-		{"what do you do", "I'm here to keep you on track. " + fields[1].question},
-		{"toronto", "Got it. " + setupDone},
+		{"what do you do", "I'm here to keep you on track. " + question(1)},
+		{"toronto", "Got it. " + question(2)},
+		// A partial answer asks only for the rest.
+		{"up at 6:30", "Got it. And what time do you usually go to bed?"},
+		{"11pm", "Got it. " + question(3)},
+		{"3 litres of water", `Got it. And your daily calorie goal? Say "none" if you don't want to track it.`},
+		{"2200 cal, 160g protein", "Got it. " + question(4)},
+		{"none", "Got it. " + question(5)},
+		{"none", "Got it. " + setupDone},
 		{"hey", "Hey Arya."},
 	} {
 		_, reply, err := e.text(user, step.in)
@@ -210,14 +246,31 @@ func TestSetup(t *testing.T) {
 		}
 	}
 
+	user, _ = e.q.GetUser(e.ctx, user.ID)
+	if got := clock(time.Duration(user.WakeTime.Microseconds)*time.Microsecond, "15:04") + " " +
+		clock(time.Duration(user.Bedtime.Microseconds)*time.Microsecond, "15:04"); got != "06:30 23:00" {
+		t.Errorf("wake and bedtime = %s", got)
+	}
+	if got := e.goals(user.ID); got != "calories=2200 protein=160 sleep=null water=3000 weight=null" {
+		t.Errorf("goals = %s", got)
+	}
+
 	sys := e.llm.requests[0][0].Content
-	for _, want := range []string{"Still missing: name, timezone", "assume America/Toronto", "Do not ask"} {
+	for _, want := range []string{"Still missing: name; timezone; wake time and bedtime;", "assume America/Toronto",
+		"save the default: wake time 08:00, bedtime 22:00.", "Do not ask", "calories: not set"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("setup prompt lacks %q:\n%s", want, sys)
 		}
 	}
-	if sys := e.llm.requests[len(e.llm.requests)-1][0].Content; strings.Contains(sys, "Setup is in progress") {
+	sys = e.llm.requests[len(e.llm.requests)-1][0].Content
+	if strings.Contains(sys, "Setup is in progress") {
 		t.Errorf("prompt after setup still mentions it:\n%s", sys)
+	}
+	for _, want := range []string{"wake time: 6:30 AM", "bedtime: 11:00 PM", "calories: 2,200 cal a day", "protein: 160 g a day",
+		"carbs: not set", "water: 3 L a day", "sleep: not tracking", "target weight: not tracking", "below 1,200 cal a day"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("prompt after setup lacks %q:\n%s", want, sys)
+		}
 	}
 }
 
@@ -237,9 +290,12 @@ func TestIntroWhenUserTextsFirst(t *testing.T) {
 
 func TestToolValidation(t *testing.T) {
 	e := newEnv(t,
-		calls("set_profile", `{"name":null,"timezone":"Mars/Base"}`,
-			"set_profile", `{"name":"  ","timezone":null}`,
-			"remember", `{"fact":"  "}`),
+		calls("set_profile", `{"name":null,"timezone":"Mars/Base","wake_time":null,"bedtime":null}`,
+			"set_profile", `{"name":"  ","timezone":null,"wake_time":null,"bedtime":null}`,
+			"remember", `{"fact":"  "}`,
+			"set_profile", `{"name":null,"timezone":null,"wake_time":"7am","bedtime":null}`,
+			"set_profile", `{"name":null,"timezone":null,"wake_time":null,"bedtime":"24:00"}`,
+			"set_profile", `{"name":null,"timezone":null,"wake_time":null,"bedtime":null}`),
 	)
 	user, _, err := e.text(store.User{}, "x")
 	if err != nil {
@@ -251,7 +307,7 @@ func TestToolValidation(t *testing.T) {
 			results = append(results, m.Content)
 		}
 	}
-	if len(results) != 3 {
+	if len(results) != 6 {
 		t.Fatalf("tool results = %v", results)
 	}
 	for _, r := range results {
@@ -260,7 +316,7 @@ func TestToolValidation(t *testing.T) {
 		}
 	}
 	user, _ = e.q.GetUser(e.ctx, user.ID)
-	if user.Name.Valid || user.Timezone.Valid || len(e.memories(user.ID)) != 0 {
+	if user.Name.Valid || user.Timezone.Valid || user.WakeTime.Valid || user.Bedtime.Valid || len(e.memories(user.ID)) != 0 {
 		t.Errorf("invalid calls changed data: %+v", user)
 	}
 }

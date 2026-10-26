@@ -504,3 +504,52 @@ func TestTimezoneChange(t *testing.T) {
 		t.Errorf("sent = %v, want one text at 8:00 Vancouver time", sent)
 	}
 }
+
+// TestWakeTime sends each user's check-in at their wake time, or 8:00 if
+// they gave none, and moves a planned one when the wake time changes.
+func TestWakeTime(t *testing.T) {
+	const tz = "America/Toronto"
+	e := newEnv(t, local(tz, 2026, 10, 20, 5, 0))
+	early, earlyPhone := e.user(tz)
+	_, defaultPhone := e.user(tz)
+	setWake := func(wake string) {
+		t.Helper()
+		if _, err := e.pool.Exec(e.ctx, `UPDATE users SET wake_time = $2 WHERE id = $1`, early, wake); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setWake("06:45")
+	s := e.scheduler()
+	for _, at := range []time.Time{
+		local(tz, 2026, 10, 20, 5, 0),
+		local(tz, 2026, 10, 20, 6, 45),
+		local(tz, 2026, 10, 20, 8, 0),
+		// Day 2: the wake time moves from 6:45 to 9:30 before the planned send.
+		local(tz, 2026, 10, 21, 6, 0),
+	} {
+		e.tickAt(s, at)
+	}
+	setWake("09:30")
+	for _, at := range []time.Time{
+		local(tz, 2026, 10, 21, 6, 45),
+		local(tz, 2026, 10, 21, 8, 0),
+		local(tz, 2026, 10, 21, 9, 30),
+	} {
+		e.tickAt(s, at)
+	}
+
+	for _, c := range []struct {
+		name, phone, want string
+	}{
+		{"early riser", earlyPhone, "[Oct 20 06:45 Oct 21 09:30]"},
+		{"no wake time", defaultPhone, "[Oct 20 08:00 Oct 21 08:00]"},
+	} {
+		var got []string
+		for _, txt := range e.sender.to(c.phone) {
+			got = append(got, txt.at.Format("Jan 2 15:04"))
+		}
+		if fmt.Sprint(got) != c.want {
+			t.Errorf("%s: sent at %v, want %s", c.name, got, c.want)
+		}
+	}
+}

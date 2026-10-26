@@ -34,6 +34,16 @@ type Delivery struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Goal struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	Metric    string             `json:"metric"`
+	Value     pgtype.Int4        `json:"value"`
+	StartDate pgtype.Date        `json:"start_date"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LlmCall struct {
 	ID           int64              `json:"id"`
 	MessageID    int64              `json:"message_id"`
@@ -74,4 +84,6 @@ type User struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	Name             pgtype.Text        `json:"name"`
 	MonthlyBudgetUsd pgtype.Numeric     `json:"monthly_budget_usd"`
+	WakeTime         pgtype.Time        `json:"wake_time"`
+	Bedtime          pgtype.Time        `json:"bedtime"`
 }

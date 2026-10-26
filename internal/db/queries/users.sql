@@ -11,6 +11,8 @@ RETURNING *;
 UPDATE users
 SET name = COALESCE(sqlc.narg(name), name),
     timezone = COALESCE(sqlc.narg(timezone), timezone),
+    wake_time = COALESCE(sqlc.narg(wake_time), wake_time),
+    bedtime = COALESCE(sqlc.narg(bedtime), bedtime),
     monthly_budget_usd = COALESCE(sqlc.narg(monthly_budget_usd), monthly_budget_usd)
 WHERE id = $1
 RETURNING *;

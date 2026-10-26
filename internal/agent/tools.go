@@ -56,11 +56,31 @@ var tools = []tool{
 			Name:        "set_profile",
 			Description: "Save the user's profile fields. Pass null for fields that are not changing.",
 			Parameters: object(map[string]any{
-				"name":     map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
-				"timezone": map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
+				"name":      map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
+				"timezone":  map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
+				"wake_time": map[string]any{"type": []string{"string", "null"}, "description": "When the user usually wakes up, 24-hour HH:MM."},
+				"bedtime":   map[string]any{"type": []string{"string", "null"}, "description": "When the user usually goes to bed, 24-hour HH:MM."},
 			}),
 		},
 		run: handle((*Agent).setProfile),
+	},
+	{
+		spec: llm.Tool{
+			Name: "set_goals",
+			Description: "Set or change the user's goals. List only the metrics that are changing. A change starts today; " +
+				"earlier days keep the goal they had. Only save amounts the user gave.",
+			Parameters: object(map[string]any{
+				"goals": map[string]any{"type": "array", "items": object(map[string]any{
+					"metric": map[string]any{"type": "string", "enum": metricNames()},
+					"value": map[string]any{"type": []string{"number", "null"},
+						"description": "The amount in unit. Daily for calories, macros, and water; nightly hours for sleep; a single target for weight. " +
+							"null stops tracking the metric, like when the user says none."},
+					"unit": map[string]any{"type": []string{"string", "null"}, "enum": goalUnits(),
+						"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water; hours for sleep; lbs or kg for weight. null uses the first of these."},
+				})},
+			}),
+		},
+		run: handle((*Agent).setGoals),
 	},
 	{
 		spec: llm.Tool{
@@ -190,6 +210,8 @@ func canonical(raw string) ([]byte, error) {
 type profileArgs struct {
 	Name     *string `json:"name"`
 	Timezone *string `json:"timezone"`
+	WakeTime *string `json:"wake_time"`
+	Bedtime  *string `json:"bedtime"`
 }
 
 func (a *Agent) setProfile(ctx context.Context, q *store.Queries, userID int64, args profileArgs) (string, error) {
@@ -208,7 +230,21 @@ func (a *Agent) setProfile(ctx context.Context, q *store.Queries, userID int64, 
 		}
 		p.Timezone = pgtype.Text{String: tz, Valid: true}
 	}
-	if !p.Name.Valid && !p.Timezone.Valid {
+	for _, f := range []struct {
+		name string
+		arg  *string
+		dst  *pgtype.Time
+	}{{"wake_time", args.WakeTime, &p.WakeTime}, {"bedtime", args.Bedtime, &p.Bedtime}} {
+		if f.arg == nil {
+			continue
+		}
+		t, err := time.Parse("15:04", strings.TrimSpace(*f.arg))
+		if err != nil {
+			return fmt.Sprintf("error: %s %q is not a 24-hour time like 07:30", f.name, *f.arg), nil
+		}
+		*f.dst = pgtype.Time{Microseconds: int64(t.Hour()*60+t.Minute()) * 60_000_000, Valid: true}
+	}
+	if !p.Name.Valid && !p.Timezone.Valid && !p.WakeTime.Valid && !p.Bedtime.Valid {
 		return "error: no fields given", nil
 	}
 	if _, err := q.UpdateProfile(ctx, p); err != nil {

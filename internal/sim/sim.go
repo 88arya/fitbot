@@ -42,8 +42,9 @@ type Sim struct {
 	Agent *agent.Agent
 	// Scheduler sends Checkins on the simulated clock.
 	Scheduler *scheduler.Scheduler
-	// UserID is the simulated user, set up with name Sam and the start
-	// time's timezone, so setup is already done.
+	// UserID is the simulated user, set up with name Sam, the start time's
+	// timezone, waking at 8:00 and in bed at 22:00, and no goals tracked, so
+	// setup is already done. ResetSetup undoes this.
 	UserID int64
 
 	handler http.Handler
@@ -115,8 +116,14 @@ func New(t *testing.T, start time.Time) *Sim {
 	}
 	tc.APIURL = telnyxAPI.URL
 
-	if err := pool.QueryRow(ctx, `INSERT INTO users (phone, timezone, name) VALUES ($1, $2, 'Sam') RETURNING id`,
+	if err := pool.QueryRow(ctx, `INSERT INTO users (phone, timezone, name, wake_time, bedtime)
+		VALUES ($1, $2, 'Sam', '08:00', '22:00') RETURNING id`,
 		Phone, start.Location().String()).Scan(&s.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO goals (user_id, metric, start_date)
+		SELECT $1, metric, $2 FROM unnest(ARRAY['calories', 'water', 'sleep', 'weight']) metric`,
+		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
 	}
 	s.Agent = &agent.Agent{
@@ -140,6 +147,20 @@ func New(t *testing.T, start time.Time) *Sim {
 		Now:        s.Now,
 	}
 	return s
+}
+
+// ResetSetup clears the simulated user's profile and goals. Called before
+// the first Text, the user is new, so that text gets the intro.
+func (s *Sim) ResetSetup() {
+	s.t.Helper()
+	for _, q := range []string{
+		`DELETE FROM goals WHERE user_id = $1`,
+		`UPDATE users SET name = NULL, timezone = NULL, wake_time = NULL, bedtime = NULL WHERE id = $1`,
+	} {
+		if _, err := s.Pool.Exec(s.Ctx, q, s.UserID); err != nil {
+			s.t.Fatal(err)
+		}
+	}
 }
 
 func (s *Sim) serveTelnyx(w http.ResponseWriter, r *http.Request) {

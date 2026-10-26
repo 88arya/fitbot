@@ -12,7 +12,7 @@ import (
 )
 
 const getUser = `-- name: GetUser :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE id = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -25,12 +25,14 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.CreatedAt,
 		&i.Name,
 		&i.MonthlyBudgetUsd,
+		&i.WakeTime,
+		&i.Bedtime,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE phone = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -43,12 +45,14 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.CreatedAt,
 		&i.Name,
 		&i.MonthlyBudgetUsd,
+		&i.WakeTime,
+		&i.Bedtime,
 	)
 	return i, err
 }
 
 const listUsersWithTimezone = `-- name: ListUsersWithTimezone :many
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd FROM users WHERE timezone IS NOT NULL ORDER BY id
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime FROM users WHERE timezone IS NOT NULL ORDER BY id
 `
 
 // Users whose local time is known, so scheduled texts can be timed for them.
@@ -68,6 +72,8 @@ func (q *Queries) ListUsersWithTimezone(ctx context.Context) ([]User, error) {
 			&i.CreatedAt,
 			&i.Name,
 			&i.MonthlyBudgetUsd,
+			&i.WakeTime,
+			&i.Bedtime,
 		); err != nil {
 			return nil, err
 		}
@@ -83,15 +89,19 @@ const updateProfile = `-- name: UpdateProfile :one
 UPDATE users
 SET name = COALESCE($2, name),
     timezone = COALESCE($3, timezone),
-    monthly_budget_usd = COALESCE($4, monthly_budget_usd)
+    wake_time = COALESCE($4, wake_time),
+    bedtime = COALESCE($5, bedtime),
+    monthly_budget_usd = COALESCE($6, monthly_budget_usd)
 WHERE id = $1
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime
 `
 
 type UpdateProfileParams struct {
 	ID               int64          `json:"id"`
 	Name             pgtype.Text    `json:"name"`
 	Timezone         pgtype.Text    `json:"timezone"`
+	WakeTime         pgtype.Time    `json:"wake_time"`
+	Bedtime          pgtype.Time    `json:"bedtime"`
 	MonthlyBudgetUsd pgtype.Numeric `json:"monthly_budget_usd"`
 }
 
@@ -101,6 +111,8 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 		arg.ID,
 		arg.Name,
 		arg.Timezone,
+		arg.WakeTime,
+		arg.Bedtime,
 		arg.MonthlyBudgetUsd,
 	)
 	var i User
@@ -111,6 +123,8 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 		&i.CreatedAt,
 		&i.Name,
 		&i.MonthlyBudgetUsd,
+		&i.WakeTime,
+		&i.Bedtime,
 	)
 	return i, err
 }
@@ -118,7 +132,7 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (phone) VALUES ($1)
 ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime
 `
 
 func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
@@ -131,6 +145,8 @@ func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
 		&i.CreatedAt,
 		&i.Name,
 		&i.MonthlyBudgetUsd,
+		&i.WakeTime,
+		&i.Bedtime,
 	)
 	return i, err
 }

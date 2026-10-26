@@ -22,6 +22,8 @@ type Config struct {
 
 	DefaultTimezone *time.Location
 	AllowedSenders  []string
+	// CalorieFloor is the lowest daily calorie goal Fitbot accepts.
+	CalorieFloor int
 
 	Telnyx TelnyxConfig
 	OpenAI OpenAIConfig
@@ -84,6 +86,12 @@ func FromEnv(get func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf("DEFAULT_TIMEZONE: %w", err))
 	}
 	c.DefaultTimezone = tz
+
+	floor, err := strconv.Atoi(env("CALORIE_FLOOR", "1200"))
+	if err != nil || floor < 1 || floor > 5000 {
+		errs = append(errs, fmt.Errorf("CALORIE_FLOOR: %q is not a calorie amount from 1 to 5000", env("CALORIE_FLOOR", "")))
+	}
+	c.CalorieFloor = floor
 
 	for _, s := range strings.Split(env("ALLOWED_SENDERS", ""), ",") {
 		if s = strings.TrimSpace(s); s == "" {

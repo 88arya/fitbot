@@ -41,18 +41,42 @@ type Sender interface {
 	Send(ctx context.Context, to, body string) (string, error)
 }
 
-// Checkin is a text sent once a day at a local time.
-type Checkin struct {
-	Kind         string
-	Hour, Minute int
-	Text         func(store.User) string
+// Times of day used for users who have not given their own.
+const (
+	DefaultWake    = 8 * time.Hour
+	DefaultBedtime = 22 * time.Hour
+)
+
+// WakeTime is the user's wake time as time since midnight, or DefaultWake.
+func WakeTime(u store.User) time.Duration {
+	return timeOfDay(u.WakeTime, DefaultWake)
 }
 
-// MorningCheckin is a placeholder until goals and the training schedule
-// exist to fill it in.
+// Bedtime is the user's bedtime as time since midnight, or DefaultBedtime.
+func Bedtime(u store.User) time.Duration {
+	return timeOfDay(u.Bedtime, DefaultBedtime)
+}
+
+func timeOfDay(t pgtype.Time, def time.Duration) time.Duration {
+	if !t.Valid {
+		return def
+	}
+	return time.Duration(t.Microseconds) * time.Microsecond
+}
+
+// Checkin is a text sent once a day at a local time.
+type Checkin struct {
+	Kind string
+	// At is the user's local time to send it, as time since midnight.
+	At   func(store.User) time.Duration
+	Text func(store.User) string
+}
+
+// MorningCheckin goes out at the user's wake time. Its text is a placeholder
+// until goals and the training schedule exist to fill it in.
 var MorningCheckin = Checkin{
 	Kind: "morning_checkin",
-	Hour: 8,
+	At:   WakeTime,
 	Text: func(u store.User) string {
 		if u.Name.Valid {
 			return "Good morning, " + u.Name.String + ". How did you sleep?"
@@ -166,7 +190,7 @@ func (s *Scheduler) plan(ctx context.Context, q *store.Queries) error {
 			continue
 		}
 		for _, c := range s.Checkins {
-			day, at := c.next(now, loc, s.grace())
+			day, at := c.next(now, loc, c.At(u), s.grace())
 			if err := q.PlanDelivery(ctx, store.PlanDeliveryParams{
 				UserID:      u.ID,
 				Kind:        c.Kind,
@@ -182,14 +206,16 @@ func (s *Scheduler) plan(ctx context.Context, q *store.Queries) error {
 	return nil
 }
 
-// next returns the local day and time of the check-in's next occurrence:
-// today's if it is not yet more than grace late, otherwise tomorrow's.
-func (c Checkin) next(now time.Time, loc *time.Location, grace time.Duration) (pgtype.Date, time.Time) {
+// next returns the local day and time of the check-in's next occurrence at
+// tod, time since local midnight: today's if it is not yet more than grace
+// late, otherwise tomorrow's.
+func (c Checkin) next(now time.Time, loc *time.Location, tod, grace time.Duration) (pgtype.Date, time.Time) {
 	y, m, d := now.In(loc).Date()
-	at := time.Date(y, m, d, c.Hour, c.Minute, 0, 0, loc)
+	hour, minute := int(tod/time.Hour), int(tod%time.Hour/time.Minute)
+	at := time.Date(y, m, d, hour, minute, 0, 0, loc)
 	if now.Sub(at) > grace {
 		d++
-		at = time.Date(y, m, d, c.Hour, c.Minute, 0, 0, loc)
+		at = time.Date(y, m, d, hour, minute, 0, 0, loc)
 	}
 	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}, at
 }

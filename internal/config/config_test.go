@@ -20,6 +20,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	if c.DefaultTimezone.String() != "America/Toronto" {
 		t.Errorf("DefaultTimezone = %q", c.DefaultTimezone)
 	}
+	if c.CalorieFloor != 1200 {
+		t.Errorf("CalorieFloor = %d", c.CalorieFloor)
+	}
 	if c.Telnyx.APIKey != "" || c.OpenAI.APIKey != "" {
 		t.Errorf("providers should default to disabled")
 	}
@@ -33,6 +36,8 @@ func TestFromEnvErrors(t *testing.T) {
 	}{
 		{"missing database", map[string]string{}, "DATABASE_URL is required"},
 		{"bad timezone", map[string]string{"DATABASE_URL": "x", "DEFAULT_TIMEZONE": "Mars/Base"}, "DEFAULT_TIMEZONE"},
+		{"bad calorie floor", map[string]string{"DATABASE_URL": "x", "CALORIE_FLOOR": "lots"}, "CALORIE_FLOOR"},
+		{"zero calorie floor", map[string]string{"DATABASE_URL": "x", "CALORIE_FLOOR": "0"}, "CALORIE_FLOOR"},
 		{"bad sender", map[string]string{"DATABASE_URL": "x", "ALLOWED_SENDERS": "4165551234"}, "not E.164"},
 		{"telnyx missing public key", map[string]string{"DATABASE_URL": "x", "TELNYX_API_KEY": "k"}, "TELNYX_PUBLIC_KEY is required"},
 		{"openai missing model", map[string]string{"DATABASE_URL": "x", "OPENAI_API_KEY": "k"}, "OPENAI_MODEL is required"},

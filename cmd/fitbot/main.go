@@ -75,6 +75,7 @@ func run() error {
 			Store:           sms.Store,
 			LLM:             llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model, cfg.OpenAI.InputPrice, cfg.OpenAI.OutputPrice),
 			DefaultTimezone: cfg.DefaultTimezone.String(),
+			CalorieFloor:    cfg.CalorieFloor,
 		}
 	}
 
