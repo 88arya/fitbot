@@ -9,12 +9,24 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly }
+    groups:
+      docker:
+        patterns: ["*"]
   - package-ecosystem: docker-compose
     directories: ["/", "/deploy"]
     schedule: { interval: weekly }
+    groups:
+      compose:
+        patterns: ["*"]
   - package-ecosystem: terraform
     directory: /infra/terraform
     schedule: { interval: weekly }
+    groups:
+      terraform:
+        patterns: ["*"]
