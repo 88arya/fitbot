@@ -14,3 +14,12 @@ WHERE id = $1 AND user_id = $2;
 
 -- name: DeleteMemory :execrows
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
+
+-- name: GetMemory :one
+SELECT * FROM memories WHERE id = $1 AND user_id = $2;
+
+-- name: RestoreMemory :exec
+-- Puts a forgotten fact back under its old id, so later undos that name it
+-- still find it.
+INSERT INTO memories (id, user_id, fact) OVERRIDING SYSTEM VALUE
+VALUES (@id, @user_id, @fact);

@@ -67,16 +67,20 @@ func run() error {
 			AllowedSenders: cfg.AllowedSenders,
 		}
 	}
-	if cfg.OpenAI.APIKey == "" {
-		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
-	} else if sms != nil {
+	if sms != nil {
+		// The agent runs without an LLM too, so fast-path texts like "undo"
+		// still work.
 		sms.Agent = &agent.Agent{
 			Pool:            pool,
 			Store:           sms.Store,
-			LLM:             llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model, cfg.OpenAI.InputPrice, cfg.OpenAI.OutputPrice),
 			DefaultTimezone: cfg.DefaultTimezone.String(),
 			CalorieFloor:    cfg.CalorieFloor,
 		}
+	}
+	if cfg.OpenAI.APIKey == "" {
+		slog.Warn("OPENAI_API_KEY not set; only fast-path replies will work")
+	} else if sms != nil {
+		sms.Agent.LLM = llm.New(cfg.OpenAI.BaseURL, cfg.OpenAI.APIKey, cfg.OpenAI.Model, cfg.OpenAI.InputPrice, cfg.OpenAI.OutputPrice)
 	}
 
 	srv := &http.Server{

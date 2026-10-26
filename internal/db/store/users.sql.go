@@ -85,6 +85,46 @@ func (q *Queries) ListUsersWithTimezone(ctx context.Context) ([]User, error) {
 	return items, nil
 }
 
+const lockUser = `-- name: LockUser :one
+SELECT id FROM users WHERE id = $1 FOR UPDATE
+`
+
+// Makes changes to one user's data that must not interleave take turns.
+func (q *Queries) LockUser(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, lockUser, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const restoreProfile = `-- name: RestoreProfile :exec
+UPDATE users
+SET name = $1,
+    timezone = $2,
+    wake_time = $3,
+    bedtime = $4
+WHERE id = $5
+`
+
+type RestoreProfileParams struct {
+	Name     pgtype.Text `json:"name"`
+	Timezone pgtype.Text `json:"timezone"`
+	WakeTime pgtype.Time `json:"wake_time"`
+	Bedtime  pgtype.Time `json:"bedtime"`
+	ID       int64       `json:"id"`
+}
+
+// Sets the profile fields exactly, NULLs included, to undo a change.
+func (q *Queries) RestoreProfile(ctx context.Context, arg RestoreProfileParams) error {
+	_, err := q.db.Exec(ctx, restoreProfile,
+		arg.Name,
+		arg.Timezone,
+		arg.WakeTime,
+		arg.Bedtime,
+		arg.ID,
+	)
+	return err
+}
+
 const updateProfile = `-- name: UpdateProfile :one
 UPDATE users
 SET name = COALESCE($2, name),

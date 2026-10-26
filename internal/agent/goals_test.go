@@ -206,3 +206,29 @@ func TestGoalHistory(t *testing.T) {
 		t.Errorf("goal rows = %v, want %s", got, want)
 	}
 }
+
+func TestProgress(t *testing.T) {
+	goal := func(v int32) store.Goal { return store.Goal{Value: pgtype.Int4{Int32: v, Valid: true}} }
+	for _, c := range []struct {
+		metric string
+		total  int
+		g      store.Goal
+		set    bool
+		want   string
+	}{
+		{"calories", 1240, goal(1800), true, "1,240 / 1,800 cal today, 560 cal to go"},
+		{"calories", 1800, goal(1800), true, "1,800 / 1,800 cal today, goal hit"},
+		{"calories", 1950, goal(1800), true, "1,950 / 1,800 cal today, 150 cal over"},
+		{"protein", 170, goal(150), true, "170 / 150 g today, goal hit"},
+		{"fat", 80, goal(70), true, "80 / 70 g today, 10 g over"},
+		{"water", 750, goal(2000), true, "750 ml / 2 L today, 1.25 L to go"},
+		{"water", 2500, goal(2000), true, "2.5 / 2 L today, goal hit"},
+		{"calories", 350, store.Goal{}, true, "350 cal today"},
+		{"calories", 350, store.Goal{}, false, "350 cal today"},
+	} {
+		m, _ := metricByName(c.metric)
+		if got := progress(m, c.total, c.g, c.set, "today"); got != c.want {
+			t.Errorf("%s %d = %q, want %q", c.metric, c.total, got, c.want)
+		}
+	}
+}

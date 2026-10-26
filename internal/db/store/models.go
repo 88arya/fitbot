@@ -17,6 +17,9 @@ type Action struct {
 	Occurrence int32              `json:"occurrence"`
 	Result     string             `json:"result"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	Undo       []byte             `json:"undo"`
+	UndoneAt   pgtype.Timestamptz `json:"undone_at"`
+	UndoneBy   pgtype.Int8        `json:"undone_by"`
 }
 
 type Delivery struct {
@@ -40,6 +43,20 @@ type Goal struct {
 	Metric    string             `json:"metric"`
 	Value     pgtype.Int4        `json:"value"`
 	StartDate pgtype.Date        `json:"start_date"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type IntakeLog struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	ActionID  int64              `json:"action_id"`
+	MessageID int64              `json:"message_id"`
+	LocalDate pgtype.Date        `json:"local_date"`
+	Metric    string             `json:"metric"`
+	Amount    int32              `json:"amount"`
+	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }

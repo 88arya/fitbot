@@ -7,8 +7,23 @@ ON CONFLICT (message_id, tool, args, occurrence) DO NOTHING
 RETURNING id;
 
 -- name: SetActionResult :exec
-UPDATE actions SET result = @result WHERE id = @id;
+-- undo is NULL when the change cannot be undone.
+UPDATE actions SET result = @result, undo = sqlc.narg(undo) WHERE id = @id;
 
 -- name: ActionResult :one
 SELECT result FROM actions
 WHERE message_id = @message_id AND tool = @tool AND args = @args AND occurrence = @occurrence;
+
+-- name: UndoneBy :one
+-- The action the "undo" text message_id reversed, if it ran before.
+SELECT * FROM actions WHERE undone_by = @message_id;
+
+-- name: NextUndo :one
+-- The user's newest action that can be undone and isn't yet.
+SELECT * FROM actions
+WHERE user_id = @user_id AND undo IS NOT NULL AND undone_at IS NULL
+ORDER BY id DESC
+LIMIT 1;
+
+-- name: MarkUndone :exec
+UPDATE actions SET undone_at = now(), undone_by = @message_id WHERE id = @id;

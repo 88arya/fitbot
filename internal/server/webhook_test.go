@@ -269,3 +269,15 @@ func TestWebhookRejectsUnsigned(t *testing.T) {
 		t.Errorf("unsigned webhook: %d", rec.Code)
 	}
 }
+
+// TestGreetNeedsLLM checks nobody is greeted without an LLM, since setup
+// can't go on without one.
+func TestGreetNeedsLLM(t *testing.T) {
+	h := newHarness(t)
+	h.sms.Agent.LLM = nil
+	h.sms.Greet(context.Background())
+	time.Sleep(100 * time.Millisecond)
+	if s := h.fakes.sent(); len(s) != 0 {
+		t.Errorf("greeted without an LLM: %q", s)
+	}
+}

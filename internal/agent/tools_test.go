@@ -19,3 +19,16 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
+
+func TestIsUndo(t *testing.T) {
+	for _, in := range []string{"undo", "Undo", " UNDO. ", "undo that", "Undo it!", "undo last"} {
+		if !isUndo(in) {
+			t.Errorf("isUndo(%q) = false", in)
+		}
+	}
+	for _, in := range []string{"", "undo the lunch", "can you undo", "undone", "redo"} {
+		if isUndo(in) {
+			t.Errorf("isUndo(%q) = true", in)
+		}
+	}
+}

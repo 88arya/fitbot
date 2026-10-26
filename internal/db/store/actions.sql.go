@@ -7,6 +7,8 @@ package store
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const actionResult = `-- name: ActionResult :one
@@ -63,16 +65,83 @@ func (q *Queries) ClaimAction(ctx context.Context, arg ClaimActionParams) (int64
 	return id, err
 }
 
+const markUndone = `-- name: MarkUndone :exec
+UPDATE actions SET undone_at = now(), undone_by = $1 WHERE id = $2
+`
+
+type MarkUndoneParams struct {
+	MessageID pgtype.Int8 `json:"message_id"`
+	ID        int64       `json:"id"`
+}
+
+func (q *Queries) MarkUndone(ctx context.Context, arg MarkUndoneParams) error {
+	_, err := q.db.Exec(ctx, markUndone, arg.MessageID, arg.ID)
+	return err
+}
+
+const nextUndo = `-- name: NextUndo :one
+SELECT id, user_id, message_id, tool, args, occurrence, result, created_at, undo, undone_at, undone_by FROM actions
+WHERE user_id = $1 AND undo IS NOT NULL AND undone_at IS NULL
+ORDER BY id DESC
+LIMIT 1
+`
+
+// The user's newest action that can be undone and isn't yet.
+func (q *Queries) NextUndo(ctx context.Context, userID int64) (Action, error) {
+	row := q.db.QueryRow(ctx, nextUndo, userID)
+	var i Action
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.MessageID,
+		&i.Tool,
+		&i.Args,
+		&i.Occurrence,
+		&i.Result,
+		&i.CreatedAt,
+		&i.Undo,
+		&i.UndoneAt,
+		&i.UndoneBy,
+	)
+	return i, err
+}
+
 const setActionResult = `-- name: SetActionResult :exec
-UPDATE actions SET result = $1 WHERE id = $2
+UPDATE actions SET result = $1, undo = $2 WHERE id = $3
 `
 
 type SetActionResultParams struct {
 	Result string `json:"result"`
+	Undo   []byte `json:"undo"`
 	ID     int64  `json:"id"`
 }
 
+// undo is NULL when the change cannot be undone.
 func (q *Queries) SetActionResult(ctx context.Context, arg SetActionResultParams) error {
-	_, err := q.db.Exec(ctx, setActionResult, arg.Result, arg.ID)
+	_, err := q.db.Exec(ctx, setActionResult, arg.Result, arg.Undo, arg.ID)
 	return err
+}
+
+const undoneBy = `-- name: UndoneBy :one
+SELECT id, user_id, message_id, tool, args, occurrence, result, created_at, undo, undone_at, undone_by FROM actions WHERE undone_by = $1
+`
+
+// The action the "undo" text message_id reversed, if it ran before.
+func (q *Queries) UndoneBy(ctx context.Context, messageID pgtype.Int8) (Action, error) {
+	row := q.db.QueryRow(ctx, undoneBy, messageID)
+	var i Action
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.MessageID,
+		&i.Tool,
+		&i.Args,
+		&i.Occurrence,
+		&i.Result,
+		&i.CreatedAt,
+		&i.Undo,
+		&i.UndoneAt,
+		&i.UndoneBy,
+	)
+	return i, err
 }

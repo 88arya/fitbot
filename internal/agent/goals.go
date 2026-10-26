@@ -2,13 +2,16 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,16 +33,20 @@ type metric struct {
 	min, max int
 	// per is how often the goal applies, like "a day"; empty for a target.
 	per string
+	// atLeast is true when going past the goal still counts as meeting it,
+	// as with protein, rather than going over.
+	atLeast bool
 }
 
 var metrics = []metric{
 	{name: "calories", label: "calories", units: map[string]float64{"cal": 1}, unitOrder: []string{"cal"}, max: 10000, per: "a day"},
-	{name: "protein", label: "protein", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1000, per: "a day"},
+	{name: "protein", label: "protein", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1000, per: "a day", atLeast: true},
 	{name: "carbs", label: "carbs", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1500, per: "a day"},
 	{name: "fat", label: "fat", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 500, per: "a day"},
 	{name: "water", label: "water", units: map[string]float64{"ml": 1, "l": 1000, "oz": 29.5735}, unitOrder: []string{"ml", "l", "oz"},
-		min: 250, max: 10000, per: "a day"},
-	{name: "sleep", label: "sleep", units: map[string]float64{"hours": 60}, unitOrder: []string{"hours"}, min: 3 * 60, max: 14 * 60, per: "a night"},
+		min: 250, max: 10000, per: "a day", atLeast: true},
+	{name: "sleep", label: "sleep", units: map[string]float64{"hours": 60}, unitOrder: []string{"hours"}, min: 3 * 60, max: 14 * 60, per: "a night",
+		atLeast: true},
 	// 50 to 1,000 lbs, in grams.
 	{name: "weight", label: "target weight", units: map[string]float64{"lbs": gramsPerPound, "kg": 1000}, unitOrder: []string{"lbs", "kg"},
 		min: 22680, max: 453592},
@@ -150,7 +157,7 @@ type goalsArgs struct {
 	Goals []goalArg `json:"goals"`
 }
 
-func (a *Agent) setGoals(ctx context.Context, q *store.Queries, userID int64, args goalsArgs) (string, error) {
+func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, error) {
 	if len(args.Goals) == 0 {
 		return "error: no goals given", nil
 	}
@@ -180,18 +187,35 @@ func (a *Agent) setGoals(ctx context.Context, q *store.Queries, userID int64, ar
 		changes = append(changes, change{m, pgtype.Int4{Int32: int32(v), Valid: true}})
 	}
 
-	user, err := q.GetUser(ctx, userID)
+	user, err := c.q.GetUser(ctx, c.userID)
 	if err != nil {
 		return "", err
 	}
 	today := a.localDate(user)
+	undo := &undoRecord{Op: undoRestoreGoals, Day: today.Time.Format(time.DateOnly)}
 	var saved []string
-	for _, c := range changes {
-		if err := q.SetGoal(ctx, store.SetGoalParams{UserID: userID, Metric: c.m.name, Value: c.value, StartDate: today}); err != nil {
+	for _, ch := range changes {
+		// A change made earlier today is replaced, so undo puts its value
+		// back; otherwise undo removes today's row.
+		before := goalBefore{Metric: ch.m.name}
+		old, err := c.q.GoalOnDay(ctx, store.GoalOnDayParams{UserID: c.userID, Metric: ch.m.name, StartDate: today})
+		switch {
+		case err == nil:
+			before.Existed = true
+			if old.Value.Valid {
+				before.Value = &old.Value.Int32
+			}
+		case !errors.Is(err, pgx.ErrNoRows):
 			return "", err
 		}
-		saved = append(saved, c.m.describe(store.Goal{Value: c.value}))
+		undo.Goals = append(undo.Goals, before)
+		if err := c.q.SetGoal(ctx, store.SetGoalParams{UserID: c.userID, Metric: ch.m.name, Value: ch.value, StartDate: today}); err != nil {
+			return "", err
+		}
+		saved = append(saved, ch.m.describe(store.Goal{Value: ch.value}))
 	}
+	undo.Desc = "setting goals (" + strings.Join(saved, "; ") + ")"
+	c.undo = undo
 	return "saved, starting today: " + strings.Join(saved, "; "), nil
 }
 

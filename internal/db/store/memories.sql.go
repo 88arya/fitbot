@@ -37,6 +37,28 @@ func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) (int
 	return result.RowsAffected(), nil
 }
 
+const getMemory = `-- name: GetMemory :one
+SELECT id, user_id, fact, created_at, updated_at FROM memories WHERE id = $1 AND user_id = $2
+`
+
+type GetMemoryParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) GetMemory(ctx context.Context, arg GetMemoryParams) (Memory, error) {
+	row := q.db.QueryRow(ctx, getMemory, arg.ID, arg.UserID)
+	var i Memory
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Fact,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertMemory = `-- name: InsertMemory :one
 INSERT INTO memories (user_id, fact) VALUES ($1, $2)
 RETURNING id, user_id, fact, created_at, updated_at
@@ -88,6 +110,24 @@ func (q *Queries) ListMemories(ctx context.Context, userID int64) ([]Memory, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const restoreMemory = `-- name: RestoreMemory :exec
+INSERT INTO memories (id, user_id, fact) OVERRIDING SYSTEM VALUE
+VALUES ($1, $2, $3)
+`
+
+type RestoreMemoryParams struct {
+	ID     int64  `json:"id"`
+	UserID int64  `json:"user_id"`
+	Fact   string `json:"fact"`
+}
+
+// Puts a forgotten fact back under its old id, so later undos that name it
+// still find it.
+func (q *Queries) RestoreMemory(ctx context.Context, arg RestoreMemoryParams) error {
+	_, err := q.db.Exec(ctx, restoreMemory, arg.ID, arg.UserID, arg.Fact)
+	return err
 }
 
 const updateMemory = `-- name: UpdateMemory :execrows

@@ -11,6 +11,47 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const deleteGoal = `-- name: DeleteGoal :exec
+DELETE FROM goals WHERE user_id = $1 AND metric = $2 AND start_date = $3
+`
+
+type DeleteGoalParams struct {
+	UserID    int64       `json:"user_id"`
+	Metric    string      `json:"metric"`
+	StartDate pgtype.Date `json:"start_date"`
+}
+
+func (q *Queries) DeleteGoal(ctx context.Context, arg DeleteGoalParams) error {
+	_, err := q.db.Exec(ctx, deleteGoal, arg.UserID, arg.Metric, arg.StartDate)
+	return err
+}
+
+const goalOnDay = `-- name: GoalOnDay :one
+SELECT id, user_id, metric, value, start_date, created_at, updated_at FROM goals WHERE user_id = $1 AND metric = $2 AND start_date = $3
+`
+
+type GoalOnDayParams struct {
+	UserID    int64       `json:"user_id"`
+	Metric    string      `json:"metric"`
+	StartDate pgtype.Date `json:"start_date"`
+}
+
+// The goal row that starts on day, if a change was made that day.
+func (q *Queries) GoalOnDay(ctx context.Context, arg GoalOnDayParams) (Goal, error) {
+	row := q.db.QueryRow(ctx, goalOnDay, arg.UserID, arg.Metric, arg.StartDate)
+	var i Goal
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Metric,
+		&i.Value,
+		&i.StartDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const goalsOn = `-- name: GoalsOn :many
 SELECT DISTINCT ON (metric) id, user_id, metric, value, start_date, created_at, updated_at FROM goals
 WHERE user_id = $1 AND start_date <= $2

@@ -20,7 +20,8 @@ import (
 
 const fallbackReply = "Sorry, I can't think right now. Try again in a few minutes."
 
-// SMS holds what the Telnyx webhook needs. A nil Agent sends the fallback reply.
+// SMS holds what the Telnyx webhook needs. A nil Agent sends the fallback
+// reply, as does an Agent without an LLM for texts that need one.
 type SMS struct {
 	Store          *store.Queries
 	Telnyx         *telnyx.Client
@@ -146,9 +147,12 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 	text := fallbackReply
 	if s.Agent != nil {
 		out, err := s.Agent.Reply(ctx, user.ID, in)
-		if err != nil {
+		switch {
+		case errors.Is(err, agent.ErrNoLLM):
+			slog.Warn("no LLM to answer text", "message_id", in.ID)
+		case err != nil:
 			slog.Error("agent failed", "message_id", in.ID, "err", err)
-		} else {
+		default:
 			text = out
 		}
 	}
@@ -157,8 +161,9 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 
 // Greet texts the intro to allowed senders Fitbot has never texted, so setup
 // starts as soon as Fitbot runs instead of waiting for their first text.
+// Setup needs the LLM, so without one nobody is greeted.
 func (s *SMS) Greet(ctx context.Context) {
-	if s.Agent == nil {
+	if s.Agent == nil || s.Agent.LLM == nil {
 		return
 	}
 	for _, phone := range s.AllowedSenders {

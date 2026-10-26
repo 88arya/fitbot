@@ -16,3 +16,10 @@ ORDER BY metric, start_date DESC;
 SELECT DISTINCT ON (metric) * FROM goals
 WHERE user_id = @user_id AND start_date <= @day
 ORDER BY metric, start_date DESC;
+
+-- name: GoalOnDay :one
+-- The goal row that starts on day, if a change was made that day.
+SELECT * FROM goals WHERE user_id = @user_id AND metric = @metric AND start_date = @start_date;
+
+-- name: DeleteGoal :exec
+DELETE FROM goals WHERE user_id = @user_id AND metric = @metric AND start_date = @start_date;

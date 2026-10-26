@@ -29,24 +29,37 @@ func object(props map[string]any) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 }
 
+// call is one tool call being applied. q is bound to the call's
+// transaction.
+type call struct {
+	q      *store.Queries
+	userID int64
+	// msgID is the inbound text being answered, and actionID the action row
+	// recording this call.
+	msgID, actionID int64
+	// undo is set by a handler whose change can be reversed, to what
+	// reverses it.
+	undo *undoRecord
+}
+
 // tool is one function the model can call. run decodes the arguments and
-// applies the call through q, which is bound to the call's transaction.
+// applies the call.
 type tool struct {
 	spec llm.Tool
-	run  func(a *Agent, ctx context.Context, q *store.Queries, userID int64, raw []byte) (string, error)
+	run  func(a *Agent, ctx context.Context, c *call, raw []byte) (string, error)
 }
 
 // handle wraps fn so its arguments are decoded into T first. Unknown fields
 // and wrong types come back as errors the model can correct.
-func handle[T any](fn func(*Agent, context.Context, *store.Queries, int64, T) (string, error)) func(*Agent, context.Context, *store.Queries, int64, []byte) (string, error) {
-	return func(a *Agent, ctx context.Context, q *store.Queries, userID int64, raw []byte) (string, error) {
+func handle[T any](fn func(*Agent, context.Context, *call, T) (string, error)) func(*Agent, context.Context, *call, []byte) (string, error) {
+	return func(a *Agent, ctx context.Context, c *call, raw []byte) (string, error) {
 		var args T
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&args); err != nil {
 			return fmt.Sprintf("error: invalid arguments: %v", err), nil
 		}
-		return fn(a, ctx, q, userID, args)
+		return fn(a, ctx, c, args)
 	}
 }
 
@@ -81,6 +94,47 @@ var tools = []tool{
 			}),
 		},
 		run: handle((*Agent).setGoals),
+	},
+	{
+		spec: llm.Tool{
+			Name: "log_intake",
+			Description: "Add amounts the user ate to their daily totals, using only the amounts they gave. Never estimate: " +
+				"if they gave no amount, don't call this; ask for one. Protein, carbs, and fat are logged only if the user tracks them.",
+			Parameters: object(map[string]any{
+				"calories": map[string]any{"type": []string{"number", "null"}, "description": "Calories (kcal), or null if not given."},
+				"protein":  map[string]any{"type": []string{"number", "null"}, "description": "Grams of protein, or null if not given."},
+				"carbs":    map[string]any{"type": []string{"number", "null"}, "description": "Grams of carbs, or null if not given."},
+				"fat":      map[string]any{"type": []string{"number", "null"}, "description": "Grams of fat, or null if not given."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day it counts toward, YYYY-MM-DD, when they name one like \"yesterday\". null for today."},
+			}),
+		},
+		run: handle((*Agent).logIntake),
+	},
+	{
+		spec: llm.Tool{
+			Name:        "edit_log",
+			Description: "Change a logged amount. Pass null for the field that is not changing.",
+			Parameters: object(map[string]any{
+				"type":   map[string]any{"type": "string", "enum": intakeMetrics},
+				"id":     map[string]any{"type": []string{"integer", "null"}, "description": "The amount's id, or null for the most recent of this type."},
+				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in cal or g."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "Move the amount to this local day, YYYY-MM-DD, like when the user says it was yesterday."},
+			}),
+		},
+		run: handle((*Agent).editLog),
+	},
+	{
+		spec: llm.Tool{
+			Name:        "delete_log",
+			Description: "Delete a logged amount.",
+			Parameters: object(map[string]any{
+				"type": map[string]any{"type": "string", "enum": intakeMetrics},
+				"id":   map[string]any{"type": []string{"integer", "null"}, "description": "The amount's id, or null for the most recent of this type."},
+			}),
+		},
+		run: handle((*Agent).deleteLog),
 	},
 	{
 		spec: llm.Tool{
@@ -166,6 +220,11 @@ func (a *Agent) applyTool(ctx context.Context, userID, msgID int64, tc llm.ToolC
 	outcome = "ok"
 	err = pgx.BeginFunc(ctx, a.Pool, func(tx pgx.Tx) error {
 		q := a.Store.WithTx(tx)
+		// Takes turns with "undo", so an undo never picks its action while a
+		// newer one is half written.
+		if _, err := q.LockUser(ctx, userID); err != nil {
+			return err
+		}
 		id, err := q.ClaimAction(ctx, claim)
 		if errors.Is(err, pgx.ErrNoRows) {
 			outcome = "replayed"
@@ -177,13 +236,20 @@ func (a *Agent) applyTool(ctx context.Context, userID, msgID int64, tc llm.ToolC
 		if err != nil {
 			return err
 		}
-		if result, err = t.run(a, ctx, q, userID, args); err != nil {
+		c := &call{q: q, userID: userID, msgID: msgID, actionID: id}
+		if result, err = t.run(a, ctx, c, args); err != nil {
 			return err
 		}
 		if strings.HasPrefix(result, "error") {
 			return errRejected
 		}
-		return q.SetActionResult(ctx, store.SetActionResultParams{ID: id, Result: result})
+		var undo []byte
+		if c.undo != nil {
+			if undo, err = json.Marshal(c.undo); err != nil {
+				return err
+			}
+		}
+		return q.SetActionResult(ctx, store.SetActionResultParams{ID: id, Result: result, Undo: undo})
 	})
 	if errors.Is(err, errRejected) {
 		return result, "error", nil
@@ -214,8 +280,8 @@ type profileArgs struct {
 	Bedtime  *string `json:"bedtime"`
 }
 
-func (a *Agent) setProfile(ctx context.Context, q *store.Queries, userID int64, args profileArgs) (string, error) {
-	p := store.UpdateProfileParams{ID: userID}
+func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (string, error) {
+	p := store.UpdateProfileParams{ID: c.userID}
 	if args.Name != nil {
 		name := strings.TrimSpace(*args.Name)
 		if name == "" || len(name) > 100 {
@@ -247,8 +313,30 @@ func (a *Agent) setProfile(ctx context.Context, q *store.Queries, userID int64, 
 	if !p.Name.Valid && !p.Timezone.Valid && !p.WakeTime.Valid && !p.Bedtime.Valid {
 		return "error: no fields given", nil
 	}
-	if _, err := q.UpdateProfile(ctx, p); err != nil {
+	old, err := c.q.GetUser(ctx, c.userID)
+	if err != nil {
 		return "", err
+	}
+	if _, err := c.q.UpdateProfile(ctx, p); err != nil {
+		return "", err
+	}
+	var changed []string
+	if p.Name.Valid {
+		changed = append(changed, "name to "+p.Name.String)
+	}
+	if p.Timezone.Valid {
+		changed = append(changed, "timezone to "+p.Timezone.String)
+	}
+	if p.WakeTime.Valid {
+		changed = append(changed, "wake time to "+clock(micros(p.WakeTime), "3:04 PM"))
+	}
+	if p.Bedtime.Valid {
+		changed = append(changed, "bedtime to "+clock(micros(p.Bedtime), "3:04 PM"))
+	}
+	c.undo = &undoRecord{
+		Op:      undoRestoreProfile,
+		Desc:    "setting your " + strings.Join(changed, ", "),
+		Profile: profileOf(old),
 	}
 	return "saved", nil
 }
@@ -262,22 +350,23 @@ type rememberArgs struct {
 	Fact string `json:"fact"`
 }
 
-func (a *Agent) remember(ctx context.Context, q *store.Queries, userID int64, args rememberArgs) (string, error) {
+func (a *Agent) remember(ctx context.Context, c *call, args rememberArgs) (string, error) {
 	fact, ok := cleanFact(args.Fact)
 	if !ok {
 		return "error: fact must be 1 to 300 characters", nil
 	}
-	n, err := q.CountMemories(ctx, userID)
+	n, err := c.q.CountMemories(ctx, c.userID)
 	if err != nil {
 		return "", err
 	}
 	if n >= maxMemories {
 		return fmt.Sprintf("error: memory is full (%d facts); update or forget one first", maxMemories), nil
 	}
-	m, err := q.InsertMemory(ctx, store.InsertMemoryParams{UserID: userID, Fact: fact})
+	m, err := c.q.InsertMemory(ctx, store.InsertMemoryParams{UserID: c.userID, Fact: fact})
 	if err != nil {
 		return "", err
 	}
+	c.undo = &undoRecord{Op: undoDeleteMemory, Desc: fmt.Sprintf("saving %q", fact), ID: m.ID}
 	return fmt.Sprintf("saved as #%d", m.ID), nil
 }
 
@@ -286,18 +375,22 @@ type updateMemoryArgs struct {
 	Fact string `json:"fact"`
 }
 
-func (a *Agent) updateMemory(ctx context.Context, q *store.Queries, userID int64, args updateMemoryArgs) (string, error) {
+func (a *Agent) updateMemory(ctx context.Context, c *call, args updateMemoryArgs) (string, error) {
 	fact, ok := cleanFact(args.Fact)
 	if !ok {
 		return "error: fact must be 1 to 300 characters", nil
 	}
-	n, err := q.UpdateMemory(ctx, store.UpdateMemoryParams{ID: args.ID, UserID: userID, Fact: fact})
+	old, err := c.q.GetMemory(ctx, store.GetMemoryParams{ID: args.ID, UserID: c.userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Sprintf("error: no fact #%d", args.ID), nil
+	}
 	if err != nil {
 		return "", err
 	}
-	if n == 0 {
-		return fmt.Sprintf("error: no fact #%d", args.ID), nil
+	if _, err := c.q.UpdateMemory(ctx, store.UpdateMemoryParams{ID: args.ID, UserID: c.userID, Fact: fact}); err != nil {
+		return "", err
 	}
+	c.undo = &undoRecord{Op: undoSetMemory, Desc: fmt.Sprintf("changing %q to %q", old.Fact, fact), ID: old.ID, Fact: old.Fact}
 	return "updated", nil
 }
 
@@ -305,13 +398,17 @@ type forgetArgs struct {
 	ID int64 `json:"id"`
 }
 
-func (a *Agent) forget(ctx context.Context, q *store.Queries, userID int64, args forgetArgs) (string, error) {
-	n, err := q.DeleteMemory(ctx, store.DeleteMemoryParams{ID: args.ID, UserID: userID})
+func (a *Agent) forget(ctx context.Context, c *call, args forgetArgs) (string, error) {
+	old, err := c.q.GetMemory(ctx, store.GetMemoryParams{ID: args.ID, UserID: c.userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Sprintf("error: no fact #%d", args.ID), nil
+	}
 	if err != nil {
 		return "", err
 	}
-	if n == 0 {
-		return fmt.Sprintf("error: no fact #%d", args.ID), nil
+	if _, err := c.q.DeleteMemory(ctx, store.DeleteMemoryParams{ID: args.ID, UserID: c.userID}); err != nil {
+		return "", err
 	}
+	c.undo = &undoRecord{Op: undoRestoreMemory, Desc: fmt.Sprintf("forgetting %q", old.Fact), ID: old.ID, Fact: old.Fact}
 	return "forgotten", nil
 }

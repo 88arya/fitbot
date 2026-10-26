@@ -28,10 +28,16 @@ const (
 	maxMemories = 30
 )
 
+// ErrNoLLM is returned for a text only the LLM can answer when no LLM is
+// configured.
+var ErrNoLLM = errors.New("no LLM configured")
+
 type Agent struct {
 	// Pool runs each tool call in a transaction; Store uses the same database.
-	Pool            *pgxpool.Pool
-	Store           *store.Queries
+	Pool  *pgxpool.Pool
+	Store *store.Queries
+	// LLM may be nil, in which case only fast-path texts like "undo" get an
+	// answer.
 	LLM             *llm.Client
 	DefaultTimezone string
 	// CalorieFloor is the lowest daily calorie goal accepted; zero means 1,200.
@@ -51,7 +57,8 @@ func (a *Agent) now() time.Time {
 // which must already be stored. Tool calls along the way are applied to the
 // database, each at most once per message, so running the same message
 // again does not repeat a change. While setup is unfinished, the reply ends
-// with the next setup question.
+// with the next setup question. Fast-path texts like "undo" are answered in
+// code, without the LLM.
 func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (string, error) {
 	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen})
 	if err != nil {
@@ -66,6 +73,20 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	// setup starts the same way either way.
 	if len(history) == 1 && wasMissing {
 		return Intro(), nil
+	}
+	if isUndo(in.Body) {
+		reply, err := a.undo(ctx, userID, in.ID)
+		if err != nil {
+			return "", fmt.Errorf("undoing: %w", err)
+		}
+		state, err := a.setupState(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		return withSetup(reply, state, wasMissing), nil
+	}
+	if a.LLM == nil {
+		return "", ErrNoLLM
 	}
 
 	var convo []llm.Message
@@ -88,7 +109,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", fmt.Errorf("loading memories: %w", err)
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories)}
+		intake, err := a.intakeSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -134,6 +159,11 @@ func (a *Agent) location(user store.User) *time.Location {
 func (a *Agent) localDate(user store.User) pgtype.Date {
 	y, m, d := a.now().In(a.location(user)).Date()
 	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}
+}
+
+// micros converts a time of day to time since midnight.
+func micros(t pgtype.Time) time.Duration {
+	return time.Duration(t.Microseconds) * time.Microsecond
 }
 
 // clock formats a time of day, given as time since midnight, in layout.
@@ -187,7 +217,9 @@ func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (l
 const basePrompt = `You are Fitbot, a health and fitness assistant that texts with people over SMS.
 Keep replies short and plain: one or two sentences, no markdown, no emoji.`
 
-func (a *Agent) systemPrompt(s setupState, memories []store.Memory) string {
+// systemPrompt builds the prompt from the user's setup state, memories, and
+// section of today's logged amounts.
+func (a *Agent) systemPrompt(s setupState, memories []store.Memory, intake string) string {
 	var b strings.Builder
 	b.WriteString(basePrompt)
 	user := s.user
@@ -244,6 +276,8 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory) string {
 		"starts today, and earlier days keep the goal they had. Never make up a goal the user didn't give. Fitbot does "+
 		"not set a calorie goal below %s a day. Show amounts in cal, ml or L, g, hours, and lbs.\n",
 		metrics[0].format(a.calorieFloor()))
+
+	b.WriteString(intake)
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {

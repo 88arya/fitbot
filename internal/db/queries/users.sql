@@ -23,3 +23,16 @@ SELECT * FROM users WHERE id = $1;
 -- name: ListUsersWithTimezone :many
 -- Users whose local time is known, so scheduled texts can be timed for them.
 SELECT * FROM users WHERE timezone IS NOT NULL ORDER BY id;
+
+-- name: RestoreProfile :exec
+-- Sets the profile fields exactly, NULLs included, to undo a change.
+UPDATE users
+SET name = sqlc.narg(name),
+    timezone = sqlc.narg(timezone),
+    wake_time = sqlc.narg(wake_time),
+    bedtime = sqlc.narg(bedtime)
+WHERE id = @id;
+
+-- name: LockUser :one
+-- Makes changes to one user's data that must not interleave take turns.
+SELECT id FROM users WHERE id = $1 FOR UPDATE;
