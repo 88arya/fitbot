@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +51,16 @@ func calls(nameArgs ...string) string {
 	return `{"role":"assistant","content":null,"tool_calls":[` + strings.Join(tcs, ",") + `]}`
 }
 
+// seq makes uniq distinct within this test binary even when the clock has
+// not moved, as on Windows, where readings are coarse.
+var seq atomic.Int64
+
+// uniq returns a number for test phone numbers and message IDs that differs
+// on every call and, with high odds, from earlier runs on the same database.
+func uniq() int64 {
+	return time.Now().UnixNano()/1000 + seq.Add(1)
+}
+
 type env struct {
 	t     *testing.T
 	ctx   context.Context
@@ -88,7 +99,7 @@ func newEnv(t *testing.T, script ...string) *env {
 // newUser returns a fresh user who has been sent the intro, as Greet does.
 func (e *env) newUser() store.User {
 	e.t.Helper()
-	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1888%07d", time.Now().UnixNano()%10_000_000))
+	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1888%07d", uniq()%10_000_000))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -108,7 +119,7 @@ func (e *env) text(user store.User, body string) (store.User, string, error) {
 	in, err := e.q.InsertInbound(e.ctx, store.InsertInboundParams{
 		UserID:     user.ID,
 		Body:       body,
-		ProviderID: pgtype.Text{String: fmt.Sprintf("in-%d", time.Now().UnixNano()), Valid: true},
+		ProviderID: pgtype.Text{String: fmt.Sprintf("agent-in-%d", uniq()), Valid: true},
 	})
 	if err != nil {
 		e.t.Fatal(err)
@@ -212,7 +223,7 @@ func TestSetup(t *testing.T) {
 
 func TestIntroWhenUserTextsFirst(t *testing.T) {
 	e := newEnv(t)
-	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1666%07d", time.Now().UnixNano()%10_000_000))
+	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1666%07d", uniq()%10_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +289,7 @@ func TestMemoryIsPerUser(t *testing.T) {
 
 func TestMemoryCap(t *testing.T) {
 	e := newEnv(t)
-	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1777%07d", time.Now().UnixNano()%10_000_000))
+	user, err := e.q.UpsertUser(e.ctx, fmt.Sprintf("+1777%07d", uniq()%10_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}

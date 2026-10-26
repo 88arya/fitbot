@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,16 @@ func (f *fakes) sent() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.sends...)
+}
+
+// seq makes uniq distinct within this test binary even when the clock has
+// not moved, as on Windows, where readings are coarse.
+var seq atomic.Int64
+
+// uniq returns a number for test phone numbers and message IDs that differs
+// on every call and, with high odds, from earlier runs on the same database.
+func uniq() int64 {
+	return time.Now().UnixNano()/1000 + seq.Add(1)
 }
 
 type harness struct {
@@ -68,7 +79,7 @@ func newHarness(t *testing.T) *harness {
 		json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
 		f.sends = append(f.sends, req.Text)
-		id := fmt.Sprintf("out-%d-%d", time.Now().UnixNano(), len(f.sends))
+		id := fmt.Sprintf("server-out-%d", uniq())
 		f.mu.Unlock()
 		fmt.Fprintf(w, `{"data":{"id":%q}}`, id)
 	}))
@@ -96,7 +107,7 @@ func newHarness(t *testing.T) *harness {
 	tc.APIURL = telnyxAPI.URL
 
 	// A fresh number per run keeps tests independent without wiping the database.
-	phone := fmt.Sprintf("+1999%07d", time.Now().UnixNano()%10_000_000)
+	phone := fmt.Sprintf("+1999%07d", uniq()%10_000_000)
 	q := store.New(pool)
 	sms := &SMS{
 		Store:  q,
@@ -151,7 +162,7 @@ func (h *harness) waitSends(n int) []string {
 func TestWebhookConversation(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
-	inID := fmt.Sprintf("in-%d", time.Now().UnixNano())
+	inID := fmt.Sprintf("server-in-%d", uniq())
 
 	if code := h.text(inID, "hi"); code != http.StatusOK {
 		t.Fatalf("first webhook: %d", code)
