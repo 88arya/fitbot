@@ -43,8 +43,8 @@ type Sim struct {
 	// Scheduler sends Checkins on the simulated clock.
 	Scheduler *scheduler.Scheduler
 	// UserID is the simulated user, set up with name Sam, the start time's
-	// timezone, waking at 8:00 and in bed at 22:00, and no goals tracked, so
-	// setup is already done. ResetSetup undoes this.
+	// timezone, waking at 8:00 and in bed at 22:00, no goals tracked, and no
+	// training schedule, so setup is already done. ResetSetup undoes this.
 	UserID int64
 
 	handler http.Handler
@@ -126,6 +126,10 @@ func New(t *testing.T, start time.Time) *Sim {
 		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO training_schedules (user_id, start_date) VALUES ($1, $2)`,
+		s.UserID, start.Format(time.DateOnly)); err != nil {
+		t.Fatal(err)
+	}
 	s.Agent = &agent.Agent{
 		Pool:            pool,
 		Store:           s.Store,
@@ -149,12 +153,14 @@ func New(t *testing.T, start time.Time) *Sim {
 	return s
 }
 
-// ResetSetup clears the simulated user's profile and goals. Called before
-// the first Text, the user is new, so that text gets the intro.
+// ResetSetup clears the simulated user's profile, goals, and schedule.
+// Called before the first Text, the user is new, so that text gets the
+// intro.
 func (s *Sim) ResetSetup() {
 	s.t.Helper()
 	for _, q := range []string{
 		`DELETE FROM goals WHERE user_id = $1`,
+		`DELETE FROM training_schedules WHERE user_id = $1`,
 		`UPDATE users SET name = NULL, timezone = NULL, wake_time = NULL, bedtime = NULL WHERE id = $1`,
 	} {
 		if _, err := s.Pool.Exec(s.Ctx, q, s.UserID); err != nil {

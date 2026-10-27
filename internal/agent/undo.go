@@ -16,17 +16,19 @@ import (
 
 // Undo kinds, one for each way a change is reversed.
 const (
-	undoRestoreProfile = "restore_profile"
-	undoDeleteMemory   = "delete_memory"
-	undoSetMemory      = "set_memory"
-	undoRestoreMemory  = "restore_memory"
-	undoRestoreGoals   = "restore_goals"
-	undoDeleteIntake   = "delete_intake"
-	undoRestoreIntake  = "restore_intake"
-	undoUndeleteIntake = "undelete_intake"
-	undoDeleteSleep    = "delete_sleep"
-	undoRestoreSleep   = "restore_sleep"
-	undoUndeleteSleep  = "undelete_sleep"
+	undoRestoreProfile  = "restore_profile"
+	undoDeleteMemory    = "delete_memory"
+	undoSetMemory       = "set_memory"
+	undoRestoreMemory   = "restore_memory"
+	undoRestoreGoals    = "restore_goals"
+	undoDeleteIntake    = "delete_intake"
+	undoRestoreIntake   = "restore_intake"
+	undoUndeleteIntake  = "undelete_intake"
+	undoDeleteSleep     = "delete_sleep"
+	undoRestoreSleep    = "restore_sleep"
+	undoUndeleteSleep   = "undelete_sleep"
+	undoRestoreSchedule = "restore_schedule"
+	undoRestorePlans    = "restore_plans"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -43,8 +45,8 @@ type undoRecord struct {
 	Fact    string        `json:"fact,omitempty"`
 	Profile *profileState `json:"profile,omitempty"`
 	// Day is the local day the action changed, as YYYY-MM-DD: the day of
-	// set_goals' change, or the day a logged amount or night was on before
-	// it.
+	// set_goals' or set_schedule's change, or the day a logged amount or
+	// night was on before it.
 	Day   string       `json:"day,omitempty"`
 	Goals []goalBefore `json:"goals,omitempty"`
 	// Amount is a logged amount's value, or a night's minutes, before an
@@ -56,6 +58,13 @@ type undoRecord struct {
 	// Metrics are the intake metrics, or sleep, the action changed, whose
 	// status for Day the reply to "undo" reports.
 	Metrics []string `json:"metrics,omitempty"`
+	// Schedule is the schedule set_schedule replaced on Day, if one started
+	// that day, and Plans the day plans a change touched, as they were.
+	// Days are the days, oldest first, whose plan plan_session showed, for
+	// the reply to "undo".
+	Schedule *scheduleState `json:"schedule,omitempty"`
+	Plans    []planState    `json:"plans,omitempty"`
+	Days     []string       `json:"days,omitempty"`
 }
 
 // profileState is the profile fields set_profile changes, as they were.
@@ -260,18 +269,41 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		_, err = q.UpdateSleep(ctx, store.UpdateSleepParams{ID: rec.ID, UserID: userID, LocalDate: day, Minutes: *rec.Amount,
 			Bedtime: timeOf(rec.Bedtime), WakeTime: timeOf(rec.WakeTime)})
 		return err
+	case undoRestoreSchedule:
+		day, err := parseDay(rec.Day)
+		if err != nil {
+			return err
+		}
+		if err := q.DeleteScheduleOnDay(ctx, store.DeleteScheduleOnDayParams{UserID: userID, StartDate: day}); err != nil {
+			return err
+		}
+		if rec.Schedule != nil {
+			if err := insertSchedule(ctx, q, userID, day, *rec.Schedule); err != nil {
+				return err
+			}
+		}
+		return restorePlans(ctx, q, userID, rec.Plans)
+	case undoRestorePlans:
+		return restorePlans(ctx, q, userID, rec.Plans)
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
 }
 
-// undoReply says what was undone and, for logged amounts and nights, where
-// that day's totals or sleep now stand.
+// undoReply says what was undone and, for logged amounts, nights, and
+// training plans, where they now stand.
 func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, act store.Action) (string, error) {
 	var rec undoRecord
 	if err := json.Unmarshal(act.Undo, &rec); err != nil {
 		return "", fmt.Errorf("decoding undo for action %d: %w", act.ID, err)
 	}
 	reply := "Undid " + rec.Desc + "."
+	if rec.Op == undoRestoreSchedule || rec.Op == undoRestorePlans {
+		status, err := a.trainingUndoReply(ctx, q, userID, rec)
+		if err != nil || status == "" {
+			return reply, err
+		}
+		return reply + " " + status, nil
+	}
 	if len(rec.Metrics) == 0 {
 		return reply, nil
 	}

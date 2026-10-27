@@ -6,9 +6,10 @@ import (
 	"github.com/88arya/fitbot/internal/db/store"
 )
 
-// Setup collects the profile and goals one step at a time. Code asks the
-// questions so setup never depends on the model remembering to; the model
-// only reads the answers and saves them with set_profile and set_goals.
+// Setup collects the profile, goals, and training schedule one step at a
+// time. Code asks the questions so setup never depends on the model
+// remembering to; the model only reads the answers and saves them with
+// set_profile, set_goals, and set_schedule.
 
 // setupState is what setup checks to find the next step.
 type setupState struct {
@@ -16,6 +17,9 @@ type setupState struct {
 	// goals holds each metric's latest goal, including ones the user chose
 	// not to track, so a "none" answer counts as answered.
 	goals map[string]store.Goal
+	// hasSchedule is true once a training schedule is saved, even as
+	// "none".
+	hasSchedule bool
 }
 
 func (s setupState) hasGoal(metric string) bool {
@@ -77,6 +81,12 @@ var fields = []field{
 		label:    "target weight",
 		question: ask(`Do you have a target weight? Say "none" if not.`),
 		missing:  func(s setupState) bool { return !s.hasGoal("weight") },
+	},
+	{
+		label: "training schedule",
+		question: ask("What's your training schedule? It can be by weekday, like push Mon/Thu, pull Tue/Fri, legs Wed/Sat, " +
+			`or a rotation like full body, rest, repeat. Say "none" if you don't follow one.`),
+		missing: func(s setupState) bool { return !s.hasSchedule },
 	},
 }
 

@@ -162,6 +162,49 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name: "set_schedule",
+			Description: "Save the user's whole training schedule, starting today. It replaces the old one; skips and moves from " +
+				"today on are cleared.",
+			Parameters: object(map[string]any{
+				"kind": map[string]any{"type": []string{"string", "null"}, "enum": []any{"weekly", "rotation", nil},
+					"description": "weekly pins sessions to weekdays; rotation is a cycle of days that repeats regardless of weekday. " +
+						"null if the user doesn't follow a schedule."},
+				"days": map[string]any{"type": "array", "description": "Weekly: each training day, once. Rotation: every day of the cycle in order.",
+					"items": object(map[string]any{
+						"weekday": map[string]any{"type": []string{"string", "null"}, "enum": append(anySlice(weekdays), nil),
+							"description": "Weekly only; null for a rotation."},
+						"sessions": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+							"description": "Session names, like [\"legs\", \"cardio\"], or [\"rest\"] for a rest day."},
+						"time": map[string]any{"type": []string{"string", "null"},
+							"description": "This day's training time, 24-hour HH:MM, if it differs from training_time."},
+					})},
+				"cycle_day_today": map[string]any{"type": []string{"integer", "null"},
+					"description": "Rotation only: which day of the cycle today is, from 1, if the user said. null for day 1."},
+				"training_time": map[string]any{"type": []string{"string", "null"},
+					"description": "When the user usually trains, 24-hour HH:MM, or null."},
+			}),
+		},
+		run: handle((*Agent).setSchedule),
+	},
+	{
+		spec: llm.Tool{
+			Name:        "plan_session",
+			Description: "Change one day of the training plan, today or later, without changing the schedule.",
+			Parameters: object(map[string]any{
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day to change, YYYY-MM-DD; null for today."},
+				"change": map[string]any{"type": "string", "enum": []string{"skip", "move", "time", "clear"},
+					"description": "skip the day's sessions; move them to to_date; time sets when they're going; clear undoes a skip or move."},
+				"to_date": map[string]any{"type": []string{"string", "null"},
+					"description": "move only: the later day it moves to, YYYY-MM-DD."},
+				"time": map[string]any{"type": []string{"string", "null"},
+					"description": "time, or optionally move: when they're going, 24-hour HH:MM. null with time clears the day's own time."},
+			}),
+		},
+		run: handle((*Agent).planSession),
+	},
+	{
+		spec: llm.Tool{
 			Name:        "remember",
 			Description: "Save a new lasting fact about the user as a short sentence, like \"Trains legs on Mondays\".",
 			Parameters:  object(map[string]any{"fact": map[string]any{"type": "string"}}),
@@ -187,6 +230,15 @@ var tools = []tool{
 		},
 		run: handle((*Agent).forget),
 	},
+}
+
+// anySlice converts a list of strings for a schema enum.
+func anySlice(s []string) []any {
+	out := make([]any, len(s))
+	for i, v := range s {
+		out[i] = v
+	}
+	return out
 }
 
 var (

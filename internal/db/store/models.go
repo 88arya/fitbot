@@ -94,6 +94,24 @@ type Message struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ScheduleDay struct {
+	ScheduleID   int64       `json:"schedule_id"`
+	Slot         int32       `json:"slot"`
+	Sessions     []string    `json:"sessions"`
+	TrainingTime pgtype.Time `json:"training_time"`
+}
+
+type SessionPlan struct {
+	UserID       int64              `json:"user_id"`
+	LocalDate    pgtype.Date        `json:"local_date"`
+	Status       pgtype.Text        `json:"status"`
+	MovedTo      pgtype.Date        `json:"moved_to"`
+	Sessions     []string           `json:"sessions"`
+	MovedIn      []string           `json:"moved_in"`
+	TrainingTime pgtype.Time        `json:"training_time"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SleepLog struct {
 	ID        int64              `json:"id"`
 	UserID    int64              `json:"user_id"`
@@ -107,6 +125,17 @@ type SleepLog struct {
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TrainingSchedule struct {
+	ID           int64              `json:"id"`
+	UserID       int64              `json:"user_id"`
+	Kind         pgtype.Text        `json:"kind"`
+	CycleDays    pgtype.Int4        `json:"cycle_days"`
+	StartOffset  int32              `json:"start_offset"`
+	TrainingTime pgtype.Time        `json:"training_time"`
+	StartDate    pgtype.Date        `json:"start_date"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type User struct {

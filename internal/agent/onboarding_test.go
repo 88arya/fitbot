@@ -33,7 +33,8 @@ func TestOnboardingEndToEnd(t *testing.T) {
 			`{"goals":[{"metric":"calories","value":2000,"unit":"cal"},{"metric":"water","value":2.5,"unit":"l"},{"metric":"protein","value":150,"unit":"g"}]}`,
 			"How many hours of sleep"},
 		{"8 hours", "set_goals", `{"goals":[{"metric":"sleep","value":8,"unit":"hours"}]}`, "Do you have a target weight?"},
-		{"175 lbs", "set_goals", `{"goals":[{"metric":"weight","value":175,"unit":"lbs"}]}`, "You're all set."},
+		{"175 lbs", "set_goals", `{"goals":[{"metric":"weight","value":175,"unit":"lbs"}]}`, "What's your training schedule?"},
+		{"none", "set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`, "You're all set."},
 	} {
 		s.Script(sim.Call(step.call, step.args), sim.Say("Got it."))
 		reply := s.Text(step.text)
@@ -55,6 +56,9 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		if got := s.Rows(goals); fmt.Sprint(got) != wantGoals {
 			t.Errorf("%s: goals = %v\nwant %s", when, got, wantGoals)
 		}
+		if got := s.Rows(`SELECT kind, start_date::text FROM training_schedules`); fmt.Sprint(got) != "[<nil> | 2026-10-20]" {
+			t.Errorf("%s: schedules = %v, want one with no kind", when, got)
+		}
 	}
 	check("after setup")
 
@@ -62,7 +66,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	// with the same call, as after a crash. Neither saves anything again.
 	actions := s.Rows(`SELECT id FROM actions`)
 	s.Retry()
-	s.Script(sim.Call("set_goals", `{"goals":[{"metric":"weight","value":175,"unit":"lbs"}]}`), sim.Say("Got it."))
+	s.Script(sim.Call("set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`), sim.Say("Got it."))
 	s.Rerun()
 	check("after retry and rerun")
 	if again := s.Rows(`SELECT id FROM actions`); fmt.Sprint(again) != fmt.Sprint(actions) {

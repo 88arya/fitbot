@@ -223,6 +223,8 @@ func TestSetup(t *testing.T) {
 		calls("set_goals", `{"goals":[{"metric":"calories","value":2200,"unit":null},{"metric":"protein","value":160,"unit":"g"}]}`), gotIt,
 		calls("set_goals", `{"goals":[{"metric":"sleep","value":null,"unit":null}]}`), gotIt,
 		calls("set_goals", `{"goals":[{"metric":"weight","value":null,"unit":null}]}`), gotIt,
+		calls("set_schedule", `{"kind":"rotation","days":[{"weekday":null,"sessions":["full body"],"time":null},`+
+			`{"weekday":null,"sessions":["rest"],"time":null}],"cycle_day_today":null,"training_time":null}`), gotIt,
 		`{"role":"assistant","content":"Hey Arya."}`,
 	)
 	user := e.newUser()
@@ -237,7 +239,8 @@ func TestSetup(t *testing.T) {
 		{"3 litres of water", `Got it. And your daily calorie goal? Say "none" if you don't want to track it.`},
 		{"2200 cal, 160g protein", "Got it. " + question(4)},
 		{"none", "Got it. " + question(5)},
-		{"none", "Got it. " + setupDone},
+		{"none", "Got it. " + question(6)},
+		{"full body one day, rest the next", "Got it. " + setupDone},
 		{"hey", "Hey Arya."},
 	} {
 		_, reply, err := e.text(user, step.in)
@@ -267,7 +270,8 @@ func TestSetup(t *testing.T) {
 		t.Errorf("prompt after setup still mentions it:\n%s", sys)
 	}
 	for _, want := range []string{"wake time: 6:30 AM", "bedtime: 11:00 PM", "calories: 2,200 cal a day", "protein: 160 g a day",
-		"carbs: not set", "water: 3 L a day", "sleep: not tracking", "target weight: not tracking", "below 1,200 cal a day"} {
+		"carbs: not set", "water: 3 L a day", "sleep: not tracking", "target weight: not tracking", "below 1,200 cal a day",
+		"Schedule: 2-day rotation: full body, rest (today is day 1 of 2)"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("prompt after setup lacks %q:\n%s", want, sys)
 		}
