@@ -23,3 +23,8 @@ SELECT * FROM goals WHERE user_id = @user_id AND metric = @metric AND start_date
 
 -- name: DeleteGoal :exec
 DELETE FROM goals WHERE user_id = @user_id AND metric = @metric AND start_date = @start_date;
+
+-- name: GoalHistory :many
+-- Every goal row for one metric, oldest first, so a range of days can each
+-- be judged against the goal in force then.
+SELECT * FROM goals WHERE user_id = @user_id AND metric = @metric ORDER BY start_date;

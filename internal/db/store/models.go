@@ -94,6 +94,21 @@ type Message struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SleepLog struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	ActionID  int64              `json:"action_id"`
+	MessageID int64              `json:"message_id"`
+	LocalDate pgtype.Date        `json:"local_date"`
+	Minutes   int32              `json:"minutes"`
+	Bedtime   pgtype.Time        `json:"bedtime"`
+	WakeTime  pgtype.Time        `json:"wake_time"`
+	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type User struct {
 	ID               int64              `json:"id"`
 	Phone            string             `json:"phone"`

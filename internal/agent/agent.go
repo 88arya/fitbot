@@ -112,7 +112,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake)}
+		sleep, err := a.sleepSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -239,8 +243,8 @@ const basePrompt = `You are Fitbot, a health and fitness assistant that texts wi
 Keep replies short and plain: one or two sentences, no markdown, no emoji.`
 
 // systemPrompt builds the prompt from the user's setup state, memories, and
-// section of today's logged amounts.
-func (a *Agent) systemPrompt(s setupState, memories []store.Memory, intake string) string {
+// sections of what they logged.
+func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string) string {
 	var b strings.Builder
 	b.WriteString(basePrompt)
 	user := s.user
@@ -298,7 +302,7 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, intake strin
 		"not set a calorie goal below %s a day. Show amounts in cal, ml or L, g, hours, and lbs.\n",
 		metrics[0].format(a.calorieFloor()))
 
-	b.WriteString(intake)
+	b.WriteString(logs)
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {

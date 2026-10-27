@@ -26,8 +26,12 @@ var intakeMetrics = []string{"calories", "protein", "carbs", "fat", "water"}
 // maxIntake bounds one logged amount, in canonical units.
 var maxIntake = map[string]int{"calories": 10000, "protein": 1000, "carbs": 1000, "fat": 1000, "water": 5000}
 
+// logTypes are what edit_log and delete_log change: an intake metric, or a
+// night of sleep.
+var logTypes = append(slices.Clone(intakeMetrics), "sleep")
+
 // intakeUnits are the units edit_log takes, plus null for the canonical one.
-var intakeUnits = []any{"cal", "g", "ml", "l", "oz", nil}
+var intakeUnits = []any{"cal", "g", "ml", "l", "oz", "hours", nil}
 
 // backfillDays is how far back a log or edit may date an amount.
 const backfillDays = 30
@@ -171,14 +175,22 @@ func inUnit(m metric, v float64, unit *string) (float64, string) {
 }
 
 type editLogArgs struct {
-	Type   string   `json:"type"`
-	ID     *int64   `json:"id"`
-	Amount *float64 `json:"amount"`
-	Unit   *string  `json:"unit"`
-	Date   *string  `json:"date"`
+	Type     string   `json:"type"`
+	ID       *int64   `json:"id"`
+	Amount   *float64 `json:"amount"`
+	Unit     *string  `json:"unit"`
+	Bedtime  *string  `json:"bedtime"`
+	WakeTime *string  `json:"wake_time"`
+	Date     *string  `json:"date"`
 }
 
 func (a *Agent) editLog(ctx context.Context, c *call, args editLogArgs) (string, error) {
+	if args.Type == "sleep" {
+		return a.editSleep(ctx, c, args)
+	}
+	if args.Bedtime != nil || args.WakeTime != nil {
+		return "error: bedtime and wake_time are only for sleep", nil
+	}
 	if args.Amount == nil && args.Date == nil {
 		return "error: no changes given", nil
 	}
@@ -249,6 +261,9 @@ type deleteLogArgs struct {
 }
 
 func (a *Agent) deleteLog(ctx context.Context, c *call, args deleteLogArgs) (string, error) {
+	if args.Type == "sleep" {
+		return a.deleteSleep(ctx, c, args.ID)
+	}
 	old, m, errText, err := a.targetIntake(ctx, c, args.Type, args.ID)
 	if errText != "" || err != nil {
 		return errText, err

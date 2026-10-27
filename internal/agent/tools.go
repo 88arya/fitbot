@@ -116,16 +116,35 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
-			Name:        "edit_log",
-			Description: "Change a logged amount. Pass null for the field that is not changing.",
+			Name: "log_sleep",
+			Description: "Log a night of sleep, using only what the user said. Give hours, or bedtime and wake_time, or all three; " +
+				"with only the two times, the hours are worked out from them. Never estimate.",
 			Parameters: object(map[string]any{
-				"type":   map[string]any{"type": "string", "enum": intakeMetrics},
-				"id":     map[string]any{"type": []string{"integer", "null"}, "description": "The amount's id, or null for the most recent of this type."},
+				"hours":     map[string]any{"type": []string{"number", "null"}, "description": "Hours slept, or null if not given."},
+				"bedtime":   map[string]any{"type": []string{"string", "null"}, "description": "When they went to bed, 24-hour HH:MM, or null."},
+				"wake_time": map[string]any{"type": []string{"string", "null"}, "description": "When they woke up, 24-hour HH:MM, or null."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day they woke up, YYYY-MM-DD, for a night before last night. null for last night."},
+			}),
+		},
+		run: handle((*Agent).logSleep),
+	},
+	{
+		spec: llm.Tool{
+			Name:        "edit_log",
+			Description: "Change a logged amount or night of sleep. Pass null for the fields that are not changing.",
+			Parameters: object(map[string]any{
+				"type":   map[string]any{"type": "string", "enum": logTypes},
+				"id":     map[string]any{"type": []string{"integer", "null"}, "description": "The entry's id, or null for the most recent of this type (for sleep, the latest night)."},
 				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in unit."},
 				"unit": map[string]any{"type": []string{"string", "null"}, "enum": intakeUnits,
-					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water. null means cal, g, or ml."},
+					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water; hours for sleep. null means cal, g, ml, or hours."},
+				"bedtime": map[string]any{"type": []string{"string", "null"},
+					"description": "Sleep only: the corrected bedtime, 24-hour HH:MM."},
+				"wake_time": map[string]any{"type": []string{"string", "null"},
+					"description": "Sleep only: the corrected wake time, 24-hour HH:MM."},
 				"date": map[string]any{"type": []string{"string", "null"},
-					"description": "Move the amount to this local day, YYYY-MM-DD, like when the user says it was yesterday."},
+					"description": "Move the entry to this local day, YYYY-MM-DD, like when the user says it was yesterday. For sleep, the day they woke up."},
 			}),
 		},
 		run: handle((*Agent).editLog),
@@ -133,10 +152,10 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name:        "delete_log",
-			Description: "Delete a logged amount.",
+			Description: "Delete a logged amount or night of sleep.",
 			Parameters: object(map[string]any{
-				"type": map[string]any{"type": "string", "enum": intakeMetrics},
-				"id":   map[string]any{"type": []string{"integer", "null"}, "description": "The amount's id, or null for the most recent of this type."},
+				"type": map[string]any{"type": "string", "enum": logTypes},
+				"id":   map[string]any{"type": []string{"integer", "null"}, "description": "The entry's id, or null for the most recent of this type (for sleep, the latest night)."},
 			}),
 		},
 		run: handle((*Agent).deleteLog),
@@ -309,11 +328,11 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 		if f.arg == nil {
 			continue
 		}
-		t, err := time.Parse("15:04", strings.TrimSpace(*f.arg))
-		if err != nil {
+		t, ok := timeOfDay(*f.arg)
+		if !ok {
 			return fmt.Sprintf("error: %s %q is not a 24-hour time like 07:30", f.name, *f.arg), nil
 		}
-		*f.dst = pgtype.Time{Microseconds: int64(t.Hour()*60+t.Minute()) * 60_000_000, Valid: true}
+		*f.dst = t
 	}
 	if !p.Name.Valid && !p.Timezone.Valid && !p.WakeTime.Valid && !p.Bedtime.Valid {
 		return "error: no fields given", nil

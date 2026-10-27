@@ -23,7 +23,10 @@ func TestFormat(t *testing.T) {
 		{"water", 750, "750 ml"},
 		{"water", 2000, "2 L"},
 		{"water", 1893, "1.89 L"},
-		{"sleep", 450, "7.5 hours"},
+		{"sleep", 450, "7 hours 30 min"},
+		{"sleep", 45, "45 min"},
+		{"sleep", 0, "0 min"},
+		{"sleep", 65, "1 hour 5 min"},
 		{"sleep", 60, "1 hour"},
 		{"weight", 81647, "180 lbs"},
 		{"weight", 82000, "180.8 lbs"},
@@ -79,7 +82,7 @@ func TestSetGoalsUnits(t *testing.T) {
 		{"metric":"weight","value":82,"unit":"kg"},
 		{"metric":"fat","value":null,"unit":null}]}`)
 	want := "saved, starting today: calories: 1,800 cal a day; protein: 150 g a day; water: 1.89 L a day; " +
-		"sleep: 7.5 hours a night; target weight: 180.8 lbs; fat: not tracking"
+		"sleep: 7 hours 30 min a night; target weight: 180.8 lbs; fat: not tracking"
 	if result != want {
 		t.Errorf("result = %q\nwant %q", result, want)
 	}

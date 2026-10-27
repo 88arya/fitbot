@@ -26,6 +26,45 @@ func (q *Queries) DeleteGoal(ctx context.Context, arg DeleteGoalParams) error {
 	return err
 }
 
+const goalHistory = `-- name: GoalHistory :many
+SELECT id, user_id, metric, value, start_date, created_at, updated_at FROM goals WHERE user_id = $1 AND metric = $2 ORDER BY start_date
+`
+
+type GoalHistoryParams struct {
+	UserID int64  `json:"user_id"`
+	Metric string `json:"metric"`
+}
+
+// Every goal row for one metric, oldest first, so a range of days can each
+// be judged against the goal in force then.
+func (q *Queries) GoalHistory(ctx context.Context, arg GoalHistoryParams) ([]Goal, error) {
+	rows, err := q.db.Query(ctx, goalHistory, arg.UserID, arg.Metric)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Goal{}
+	for rows.Next() {
+		var i Goal
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Metric,
+			&i.Value,
+			&i.StartDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const goalOnDay = `-- name: GoalOnDay :one
 SELECT id, user_id, metric, value, start_date, created_at, updated_at FROM goals WHERE user_id = $1 AND metric = $2 AND start_date = $3
 `

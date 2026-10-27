@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ const (
 	undoDeleteIntake   = "delete_intake"
 	undoRestoreIntake  = "restore_intake"
 	undoUndeleteIntake = "undelete_intake"
+	undoDeleteSleep    = "delete_sleep"
+	undoRestoreSleep   = "restore_sleep"
+	undoUndeleteSleep  = "undelete_sleep"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -32,20 +36,25 @@ type undoRecord struct {
 	// Desc says what the action did, like "logging 350 cal and 30 g
 	// protein", for the reply to "undo".
 	Desc string `json:"desc"`
-	// ID is the memory or logged amount the action changed, and IDs the
-	// amounts log_intake added.
+	// ID is the memory, logged amount, or night the action changed, and
+	// IDs the amounts log_intake added.
 	ID      int64         `json:"id,omitempty"`
 	IDs     []int64       `json:"ids,omitempty"`
 	Fact    string        `json:"fact,omitempty"`
 	Profile *profileState `json:"profile,omitempty"`
 	// Day is the local day the action changed, as YYYY-MM-DD: the day of
-	// set_goals' change, or the day a logged amount was on before it.
+	// set_goals' change, or the day a logged amount or night was on before
+	// it.
 	Day   string       `json:"day,omitempty"`
 	Goals []goalBefore `json:"goals,omitempty"`
-	// Amount is a logged amount's value before an edit.
-	Amount *int32 `json:"amount,omitempty"`
-	// Metrics are the intake metrics the action changed, whose totals for
-	// Day the reply to "undo" reports.
+	// Amount is a logged amount's value, or a night's minutes, before an
+	// edit, and Bedtime and WakeTime the night's times, in microseconds
+	// since midnight.
+	Amount   *int32 `json:"amount,omitempty"`
+	Bedtime  *int64 `json:"bedtime,omitempty"`
+	WakeTime *int64 `json:"wake_time,omitempty"`
+	// Metrics are the intake metrics, or sleep, the action changed, whose
+	// status for Day the reply to "undo" reports.
 	Metrics []string `json:"metrics,omitempty"`
 }
 
@@ -102,6 +111,13 @@ func timeOf(p *int64) pgtype.Time {
 		return pgtype.Time{}
 	}
 	return pgtype.Time{Microseconds: *p, Valid: true}
+}
+
+func microsOf(t pgtype.Time) *int64 {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Microseconds
 }
 
 func parseDay(s string) (pgtype.Date, error) {
@@ -226,12 +242,30 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		}
 		_, err = q.UpdateIntake(ctx, store.UpdateIntakeParams{ID: rec.ID, UserID: userID, LocalDate: day, Amount: *rec.Amount})
 		return err
+	case undoDeleteSleep:
+		_, err := q.SetSleepDeleted(ctx, store.SetSleepDeletedParams{ID: rec.ID, UserID: userID,
+			DeletedAt: pgtype.Timestamptz{Time: a.now(), Valid: true}})
+		return err
+	case undoUndeleteSleep:
+		_, err := q.SetSleepDeleted(ctx, store.SetSleepDeletedParams{ID: rec.ID, UserID: userID})
+		return err
+	case undoRestoreSleep:
+		if rec.Amount == nil {
+			return errors.New("no minutes to restore")
+		}
+		day, err := parseDay(rec.Day)
+		if err != nil {
+			return err
+		}
+		_, err = q.UpdateSleep(ctx, store.UpdateSleepParams{ID: rec.ID, UserID: userID, LocalDate: day, Minutes: *rec.Amount,
+			Bedtime: timeOf(rec.Bedtime), WakeTime: timeOf(rec.WakeTime)})
+		return err
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
 }
 
-// undoReply says what was undone and, for logged amounts, where that day's
-// totals now stand.
+// undoReply says what was undone and, for logged amounts and nights, where
+// that day's totals or sleep now stand.
 func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, act store.Action) (string, error) {
 	var rec undoRecord
 	if err := json.Unmarshal(act.Undo, &rec); err != nil {
@@ -248,6 +282,13 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 	user, err := q.GetUser(ctx, userID)
 	if err != nil {
 		return "", err
+	}
+	if slices.Contains(rec.Metrics, "sleep") {
+		st, err := a.sleepStatus(ctx, q, user, day)
+		if err != nil {
+			return "", err
+		}
+		return reply + " " + st.forUser(), nil
 	}
 	st, err := a.dayStatus(ctx, q, user, day)
 	if err != nil {

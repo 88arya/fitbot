@@ -85,7 +85,7 @@ func metricByName(name string) (metric, bool) {
 }
 
 // format shows a canonical value in the display unit: cal, g, ml or L,
-// hours, or lbs.
+// hours and minutes, or lbs.
 func (m metric) format(v int) string {
 	switch m.name {
 	case "calories":
@@ -96,11 +96,17 @@ func (m metric) format(v int) string {
 		}
 		return decimal(float64(v)/1000, 2) + " L"
 	case "sleep":
-		h := decimal(float64(v)/60, 2)
-		if h == "1" {
-			return "1 hour"
+		var parts []string
+		switch h := v / 60; {
+		case h == 1:
+			parts = append(parts, "1 hour")
+		case h > 1:
+			parts = append(parts, strconv.Itoa(h)+" hours")
 		}
-		return h + " hours"
+		if v%60 > 0 || v < 60 {
+			parts = append(parts, strconv.Itoa(v%60)+" min")
+		}
+		return strings.Join(parts, " ")
 	case "weight":
 		return decimal(float64(v)/gramsPerPound, 1) + " lbs"
 	}
