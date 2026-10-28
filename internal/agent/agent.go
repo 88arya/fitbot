@@ -125,7 +125,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts)}
+		supplements, err := a.supplementSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -293,8 +297,8 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			labels = append(labels, f.label)
 		}
 		fmt.Fprintf(&b, "\nSetup is in progress. Still missing: %s. If the conversation gives any of these, save them "+
-			"with set_profile, set_goals, or set_schedule. Convert a city or region to its IANA timezone. If the user says \"none\" "+
-			"or doesn't want to track a goal, save it with value null, or a schedule with kind null. If they don't know their wake time or bedtime, "+
+			"with set_profile, set_goals, set_schedule, or set_supplement. Convert a city or region to its IANA timezone. If the user says \"none\" "+
+			"or doesn't want to track a goal, save it with value null, a schedule with kind null, or supplements with action none. If they don't know their wake time or bedtime, "+
 			"save the default: wake time %s, bedtime %s. Do not ask for missing fields yourself: the next setup question is added after your reply. "+
 			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\"\n",
 			strings.Join(labels, "; "), clock(scheduler.DefaultWake, "15:04"), clock(scheduler.DefaultBedtime, "15:04"))

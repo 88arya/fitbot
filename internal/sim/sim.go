@@ -116,8 +116,8 @@ func New(t *testing.T, start time.Time) *Sim {
 	}
 	tc.APIURL = telnyxAPI.URL
 
-	if err := pool.QueryRow(ctx, `INSERT INTO users (phone, timezone, name, wake_time, bedtime)
-		VALUES ($1, $2, 'Sam', '08:00', '22:00') RETURNING id`,
+	if err := pool.QueryRow(ctx, `INSERT INTO users (phone, timezone, name, wake_time, bedtime, supplements_answered)
+		VALUES ($1, $2, 'Sam', '08:00', '22:00', true) RETURNING id`,
 		Phone, start.Location().String()).Scan(&s.UserID); err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,8 @@ func New(t *testing.T, start time.Time) *Sim {
 	return s
 }
 
-// ResetSetup clears the simulated user's profile, goals, and schedule.
+// ResetSetup clears the simulated user's profile, goals, schedule, and
+// supplement answer.
 // Called before the first Text, the user is new, so that text gets the
 // intro.
 func (s *Sim) ResetSetup() {
@@ -161,7 +162,7 @@ func (s *Sim) ResetSetup() {
 	for _, q := range []string{
 		`DELETE FROM goals WHERE user_id = $1`,
 		`DELETE FROM training_schedules WHERE user_id = $1`,
-		`UPDATE users SET name = NULL, timezone = NULL, wake_time = NULL, bedtime = NULL WHERE id = $1`,
+		`UPDATE users SET name = NULL, timezone = NULL, wake_time = NULL, bedtime = NULL, supplements_answered = false WHERE id = $1`,
 	} {
 		if _, err := s.Pool.Exec(s.Ctx, q, s.UserID); err != nil {
 			s.t.Fatal(err)

@@ -27,8 +27,8 @@ var intakeMetrics = []string{"calories", "protein", "carbs", "fat", "water"}
 var maxIntake = map[string]int{"calories": 10000, "protein": 1000, "carbs": 1000, "fat": 1000, "water": 5000}
 
 // logTypes are what edit_log and delete_log change: an intake metric, a
-// night of sleep, or a workout.
-var logTypes = append(slices.Clone(intakeMetrics), "sleep", "workout")
+// night of sleep, a workout, or a supplement log.
+var logTypes = append(slices.Clone(intakeMetrics), "sleep", "workout", "supplement")
 
 // intakeUnits are the units edit_log takes, plus null for the canonical one.
 var intakeUnits = []any{"cal", "g", "ml", "l", "oz", "hours", nil}
@@ -187,11 +187,14 @@ type editLogArgs struct {
 }
 
 func (a *Agent) editLog(ctx context.Context, c *call, args editLogArgs) (string, error) {
-	if args.Type == "workout" {
+	switch args.Type {
+	case "workout":
 		return a.editWorkout(ctx, c, args)
+	case "supplement":
+		return a.editSupplementLog(ctx, c, args)
 	}
 	if args.Status != nil || args.Sessions != nil {
-		return "error: status and sessions are only for workouts", nil
+		return "error: status is only for workouts and supplements, and sessions only for workouts", nil
 	}
 	if args.Type == "sleep" {
 		return a.editSleep(ctx, c, args)
@@ -274,6 +277,8 @@ func (a *Agent) deleteLog(ctx context.Context, c *call, args deleteLogArgs) (str
 		return a.deleteSleep(ctx, c, args.ID)
 	case "workout":
 		return a.deleteWorkout(ctx, c, args.ID)
+	case "supplement":
+		return a.deleteSupplementLog(ctx, c, args.ID)
 	}
 	old, m, errText, err := a.targetIntake(ctx, c, args.Type, args.ID)
 	if errText != "" || err != nil {

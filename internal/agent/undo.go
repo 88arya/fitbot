@@ -32,6 +32,12 @@ const (
 	undoDeleteWorkout   = "delete_workout"
 	undoRestoreWorkout  = "restore_workout"
 	undoUndeleteWorkout = "undelete_workout"
+	// A supplement's plan for a day and whether setup's supplement
+	// question was answered, as they were.
+	undoRestoreSupplement     = "restore_supplement"
+	undoDeleteSupplementLogs  = "delete_supplement_logs"
+	undoRestoreSupplementLog  = "restore_supplement_log"
+	undoUndeleteSupplementLog = "undelete_supplement_log"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -41,8 +47,9 @@ type undoRecord struct {
 	// Desc says what the action did, like "logging 350 cal and 30 g
 	// protein", for the reply to "undo".
 	Desc string `json:"desc"`
-	// ID is the memory, logged amount, night, or workout the action
-	// changed, and IDs the amounts log_intake added.
+	// ID is the memory, logged amount, night, workout, supplement, or
+	// supplement log the action changed, and IDs the amounts log_intake or
+	// the logs log_supplement added.
 	ID      int64         `json:"id,omitempty"`
 	IDs     []int64       `json:"ids,omitempty"`
 	Fact    string        `json:"fact,omitempty"`
@@ -58,11 +65,16 @@ type undoRecord struct {
 	Amount   *int32 `json:"amount,omitempty"`
 	Bedtime  *int64 `json:"bedtime,omitempty"`
 	WakeTime *int64 `json:"wake_time,omitempty"`
-	// Status and Sessions are a workout's before an edit.
+	// Status is a workout's or supplement log's before an edit, and
+	// Sessions a workout's.
 	Status   *string  `json:"status,omitempty"`
 	Sessions []string `json:"sessions,omitempty"`
-	// Metrics are the intake metrics, sleep, or workout the action changed,
-	// whose status for Day the reply to "undo" reports.
+	// Plan is a supplement's plan row on Day before set_supplement, and
+	// Answered whether setup's supplement question was answered.
+	Plan     *supplementPlanState `json:"plan,omitempty"`
+	Answered *bool                `json:"answered,omitempty"`
+	// Metrics are the intake metrics, sleep, workout, or supplement the
+	// action changed, whose status for Day the reply to "undo" reports.
 	Metrics []string `json:"metrics,omitempty"`
 	// Schedule is the schedule set_schedule replaced on Day, if one started
 	// that day, and Plans the day plans a change touched, as they were.
@@ -293,6 +305,47 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		_, err = q.UpdateWorkout(ctx, store.UpdateWorkoutParams{ID: rec.ID, UserID: userID, LocalDate: day, Status: *rec.Status,
 			Sessions: rec.Sessions})
 		return err
+	case undoRestoreSupplement:
+		if rec.Answered == nil {
+			return errors.New("no supplement state to restore")
+		}
+		if p := rec.Plan; p != nil {
+			day, err := parseDay(rec.Day)
+			if err != nil {
+				return err
+			}
+			if p.Existed {
+				err = q.SetSupplementPlan(ctx, store.SetSupplementPlanParams{SupplementID: rec.ID, StartDate: day, Active: p.Active,
+					Dose: text(p.Dose), TakeAt: timeOf(p.TakeAt), Anchor: text(p.Anchor), Days: p.Days})
+			} else {
+				err = q.DeleteSupplementPlan(ctx, store.DeleteSupplementPlanParams{SupplementID: rec.ID, StartDate: day})
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return q.SetSupplementsAnswered(ctx, store.SetSupplementsAnsweredParams{ID: userID, Answered: *rec.Answered})
+	case undoDeleteSupplementLogs:
+		at := pgtype.Timestamptz{Time: a.now(), Valid: true}
+		for _, id := range rec.IDs {
+			if _, err := q.SetSupplementLogDeleted(ctx, store.SetSupplementLogDeletedParams{ID: id, UserID: userID, DeletedAt: at}); err != nil {
+				return err
+			}
+		}
+		return nil
+	case undoUndeleteSupplementLog:
+		_, err := q.SetSupplementLogDeleted(ctx, store.SetSupplementLogDeletedParams{ID: rec.ID, UserID: userID})
+		return err
+	case undoRestoreSupplementLog:
+		if rec.Status == nil {
+			return errors.New("no supplement log to restore")
+		}
+		day, err := parseDay(rec.Day)
+		if err != nil {
+			return err
+		}
+		_, err = q.UpdateSupplementLog(ctx, store.UpdateSupplementLogParams{ID: rec.ID, UserID: userID, LocalDate: day, Status: *rec.Status})
+		return err
 	case undoRestoreSchedule:
 		day, err := parseDay(rec.Day)
 		if err != nil {
@@ -314,7 +367,7 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 }
 
 // undoReply says what was undone and, for logged amounts, nights,
-// workouts, and training plans, where they now stand.
+// workouts, supplements, and training plans, where they now stand.
 func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, act store.Action) (string, error) {
 	var rec undoRecord
 	if err := json.Unmarshal(act.Undo, &rec); err != nil {
@@ -325,6 +378,13 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 		status, err := a.trainingUndoReply(ctx, q, userID, rec)
 		if err != nil || status == "" {
 			return reply, err
+		}
+		return reply + " " + status, nil
+	}
+	if rec.Op == undoRestoreSupplement {
+		status, err := a.supplementUndoReply(ctx, q, userID)
+		if err != nil {
+			return "", err
 		}
 		return reply + " " + status, nil
 	}
@@ -341,6 +401,13 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 	}
 	if slices.Contains(rec.Metrics, "sleep") {
 		st, err := a.sleepStatus(ctx, q, user, day)
+		if err != nil {
+			return "", err
+		}
+		return reply + " " + st.forUser(), nil
+	}
+	if slices.Contains(rec.Metrics, "supplement") {
+		st, err := a.supplementStatus(ctx, q, user, day)
 		if err != nil {
 			return "", err
 		}

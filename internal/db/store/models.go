@@ -127,6 +127,38 @@ type SleepLog struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Supplement struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type SupplementLog struct {
+	ID           int64              `json:"id"`
+	UserID       int64              `json:"user_id"`
+	ActionID     int64              `json:"action_id"`
+	MessageID    int64              `json:"message_id"`
+	SupplementID int64              `json:"supplement_id"`
+	LocalDate    pgtype.Date        `json:"local_date"`
+	Status       string             `json:"status"`
+	LoggedAt     pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SupplementPlan struct {
+	SupplementID int64              `json:"supplement_id"`
+	StartDate    pgtype.Date        `json:"start_date"`
+	Active       bool               `json:"active"`
+	Dose         pgtype.Text        `json:"dose"`
+	TakeAt       pgtype.Time        `json:"take_at"`
+	Anchor       pgtype.Text        `json:"anchor"`
+	Days         []int32            `json:"days"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type TrainingSchedule struct {
 	ID           int64              `json:"id"`
 	UserID       int64              `json:"user_id"`
@@ -139,14 +171,15 @@ type TrainingSchedule struct {
 }
 
 type User struct {
-	ID               int64              `json:"id"`
-	Phone            string             `json:"phone"`
-	Timezone         pgtype.Text        `json:"timezone"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	Name             pgtype.Text        `json:"name"`
-	MonthlyBudgetUsd pgtype.Numeric     `json:"monthly_budget_usd"`
-	WakeTime         pgtype.Time        `json:"wake_time"`
-	Bedtime          pgtype.Time        `json:"bedtime"`
+	ID                  int64              `json:"id"`
+	Phone               string             `json:"phone"`
+	Timezone            pgtype.Text        `json:"timezone"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	Name                pgtype.Text        `json:"name"`
+	MonthlyBudgetUsd    pgtype.Numeric     `json:"monthly_budget_usd"`
+	WakeTime            pgtype.Time        `json:"wake_time"`
+	Bedtime             pgtype.Time        `json:"bedtime"`
+	SupplementsAnswered bool               `json:"supplements_answered"`
 }
 
 type Workout struct {

@@ -409,7 +409,7 @@ func TestWorkoutRefused(t *testing.T) {
 		{"edit_log", `{"type":"workout","id":null,"amount":1,"unit":null,"bedtime":null,"wake_time":null,"status":null,"sessions":null,"date":null}`,
 			"error: a workout has no amount or times; change its status, sessions, or date"},
 		{"edit_log", `{"type":"calories","id":null,"amount":null,"unit":null,"bedtime":null,"wake_time":null,"status":"done","sessions":null,"date":null}`,
-			"error: status and sessions are only for workouts"},
+			"error: status is only for workouts and supplements, and sessions only for workouts"},
 		// Moved to a day before the schedule, push becomes that day's plan,
 		// which has nothing to skip.
 		{"edit_log", editWorkout(push, `"skipped"`, "null", `"2026-10-24"`),

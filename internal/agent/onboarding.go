@@ -6,10 +6,10 @@ import (
 	"github.com/88arya/fitbot/internal/db/store"
 )
 
-// Setup collects the profile, goals, and training schedule one step at a
-// time. Code asks the questions so setup never depends on the model
-// remembering to; the model only reads the answers and saves them with
-// set_profile, set_goals, and set_schedule.
+// Setup collects the profile, goals, training schedule, and supplements one
+// step at a time. Code asks the questions so setup never depends on the
+// model remembering to; the model only reads the answers and saves them
+// with set_profile, set_goals, set_schedule, and set_supplement.
 
 // setupState is what setup checks to find the next step.
 type setupState struct {
@@ -87,6 +87,12 @@ var fields = []field{
 		question: ask("What's your training schedule? It can be by weekday, like push Mon/Thu, pull Tue/Fri, legs Wed/Sat, " +
 			`or a rotation like full body, rest, repeat. Say "none" if you don't follow one.`),
 		missing: func(s setupState) bool { return !s.hasSchedule },
+	},
+	{
+		label: "supplements",
+		question: ask(`Do you take any supplements? Tell me what and when, like "creatine 5 g every night", ` +
+			`or say "none".`),
+		missing: func(s setupState) bool { return !s.user.SupplementsAnswered },
 	},
 }
 

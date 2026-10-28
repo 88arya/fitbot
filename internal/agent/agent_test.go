@@ -225,6 +225,7 @@ func TestSetup(t *testing.T) {
 		calls("set_goals", `{"goals":[{"metric":"weight","value":null,"unit":null}]}`), gotIt,
 		calls("set_schedule", `{"kind":"rotation","days":[{"weekday":null,"sessions":["full body"],"time":null},`+
 			`{"weekday":null,"sessions":["rest"],"time":null}],"cycle_day_today":null,"training_time":null}`), gotIt,
+		calls("set_supplement", `{"action":"none","name":null,"dose":null,"time":null,"days":null}`), gotIt,
 		`{"role":"assistant","content":"Hey Arya."}`,
 	)
 	user := e.newUser()
@@ -240,7 +241,8 @@ func TestSetup(t *testing.T) {
 		{"2200 cal, 160g protein", "Got it. " + question(4)},
 		{"none", "Got it. " + question(5)},
 		{"none", "Got it. " + question(6)},
-		{"full body one day, rest the next", "Got it. " + setupDone},
+		{"full body one day, rest the next", "Got it. " + question(7)},
+		{"none", "Got it. " + setupDone},
 		{"hey", "Hey Arya."},
 	} {
 		_, reply, err := e.text(user, step.in)

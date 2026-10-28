@@ -34,7 +34,9 @@ func TestOnboardingEndToEnd(t *testing.T) {
 			"How many hours of sleep"},
 		{"8 hours", "set_goals", `{"goals":[{"metric":"sleep","value":8,"unit":"hours"}]}`, "Do you have a target weight?"},
 		{"175 lbs", "set_goals", `{"goals":[{"metric":"weight","value":175,"unit":"lbs"}]}`, "What's your training schedule?"},
-		{"none", "set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`, "You're all set."},
+		{"none", "set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`, "Do you take any supplements?"},
+		{"creatine 5g every night", "set_supplement", `{"action":"set","name":"creatine","dose":"5 g","time":"night","days":null}`,
+			"You're all set."},
 	} {
 		s.Script(sim.Call(step.call, step.args), sim.Say("Got it."))
 		reply := s.Text(step.text)
@@ -59,6 +61,10 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		if got := s.Rows(`SELECT kind, start_date::text FROM training_schedules`); fmt.Sprint(got) != "[<nil> | 2026-10-20]" {
 			t.Errorf("%s: schedules = %v, want one with no kind", when, got)
 		}
+		if got := s.Rows(`SELECT s.name, p.start_date::text, p.dose, p.anchor FROM supplements s JOIN supplement_plans p ON p.supplement_id = s.id`); fmt.Sprint(got) !=
+			"[creatine | 2026-10-20 | 5 g | bed]" {
+			t.Errorf("%s: supplements = %v", when, got)
+		}
 	}
 	check("after setup")
 
@@ -66,7 +72,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	// with the same call, as after a crash. Neither saves anything again.
 	actions := s.Rows(`SELECT id FROM actions`)
 	s.Retry()
-	s.Script(sim.Call("set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`), sim.Say("Got it."))
+	s.Script(sim.Call("set_supplement", `{"action":"set","name":"creatine","dose":"5 g","time":"night","days":null}`), sim.Say("Got it."))
 	s.Rerun()
 	check("after retry and rerun")
 	if again := s.Rows(`SELECT id FROM actions`); fmt.Sprint(again) != fmt.Sprint(actions) {
