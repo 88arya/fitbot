@@ -710,6 +710,18 @@ func (a *Agent) planSession(ctx context.Context, c *call, args planArgs) (string
 		return fmt.Sprintf("error: %s is a rest day, with nothing planned", dayName(day)), nil
 	}
 
+	// A skip or move would leave a logged workout counting as an extra.
+	if args.Change == "skip" || args.Change == "move" {
+		logs, err := c.q.WorkoutsBetween(ctx, store.WorkoutsBetweenParams{UserID: c.userID, First: day, Last: day})
+		if err != nil {
+			return "", err
+		}
+		if len(logs) > 0 {
+			return fmt.Sprintf("error: %s already has a workout logged (#%d, %s); change it with edit_log instead", dayName(day),
+				logs[0].ID, workoutSummary(logs[0])), nil
+		}
+	}
+
 	weekly := s.Kind.String == "weekly"
 	row := t.row(day)
 	names := strings.Join(p.all(), " + ")
@@ -893,7 +905,8 @@ func (a *Agent) trainingSection(ctx context.Context, user store.User) (string, e
 		"that repeats regardless of weekday, like \"full body, rest\" or \"push, pull, legs, rest\": list every day of the cycle " +
 		"in order with weekday null and rest days as [\"rest\"], and set cycle_day_today if the user says where they are in it. " +
 		"Name sessions in short lowercase words, like push, pull, legs, upper, lower, full body, cardio. If the user doesn't follow " +
-		"a schedule, save kind null. Change one day, today or later, with plan_session: skip it, move it to a later day, set the " +
-		"time they're going, or clear a skip or move. Use the days above for what is planned; never work it out yourself.\n")
+		"a schedule, save kind null. Change one day's plan, today or later, with plan_session: skip it ahead of time, move it to " +
+		"a later day, set the time they're going, or clear a skip or move. Use the days above for what is planned; never work it " +
+		"out yourself.\n")
 	return b.String(), nil
 }

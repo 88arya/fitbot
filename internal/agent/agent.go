@@ -121,7 +121,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training)}
+		workouts, err := a.workoutSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {

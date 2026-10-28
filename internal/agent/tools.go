@@ -131,11 +131,28 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
-			Name:        "edit_log",
-			Description: "Change a logged amount or night of sleep. Pass null for the fields that are not changing.",
+			Name: "log_workout",
+			Description: "Log whether the user worked out on a day: done, or skipped. Leave sessions null to cover the day's " +
+				"planned sessions; a workout on a day with nothing planned counts as extra.",
 			Parameters: object(map[string]any{
-				"type":   map[string]any{"type": "string", "enum": logTypes},
-				"id":     map[string]any{"type": []string{"integer", "null"}, "description": "The entry's id, or null for the most recent of this type (for sleep, the latest night)."},
+				"status": map[string]any{"type": "string", "enum": workoutStatuses},
+				"sessions": map[string]any{"type": []string{"array", "null"}, "items": map[string]any{"type": "string"},
+					"description": "The sessions done or skipped, with the schedule's names, like [\"legs\"], only if the user said " +
+						"which. null for the day's planned sessions not logged yet."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day it happened, YYYY-MM-DD, when they name one like \"yesterday\". null for today."},
+			}),
+		},
+		run: handle((*Agent).logWorkout),
+	},
+	{
+		spec: llm.Tool{
+			Name:        "edit_log",
+			Description: "Change a logged amount, night of sleep, or workout. Pass null for the fields that are not changing.",
+			Parameters: object(map[string]any{
+				"type": map[string]any{"type": "string", "enum": logTypes},
+				"id": map[string]any{"type": []string{"integer", "null"},
+					"description": "The entry's id, or null for the most recent of this type (for sleep, the latest night; for a workout, the latest day's)."},
 				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in unit."},
 				"unit": map[string]any{"type": []string{"string", "null"}, "enum": intakeUnits,
 					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water; hours for sleep. null means cal, g, ml, or hours."},
@@ -143,6 +160,10 @@ var tools = []tool{
 					"description": "Sleep only: the corrected bedtime, 24-hour HH:MM."},
 				"wake_time": map[string]any{"type": []string{"string", "null"},
 					"description": "Sleep only: the corrected wake time, 24-hour HH:MM."},
+				"status": map[string]any{"type": []string{"string", "null"}, "enum": append(anySlice(workoutStatuses), nil),
+					"description": "Workout only: the corrected status."},
+				"sessions": map[string]any{"type": []string{"array", "null"}, "items": map[string]any{"type": "string"},
+					"description": "Workout only: the corrected sessions."},
 				"date": map[string]any{"type": []string{"string", "null"},
 					"description": "Move the entry to this local day, YYYY-MM-DD, like when the user says it was yesterday. For sleep, the day they woke up."},
 			}),
@@ -152,10 +173,11 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name:        "delete_log",
-			Description: "Delete a logged amount or night of sleep.",
+			Description: "Delete a logged amount, night of sleep, or workout.",
 			Parameters: object(map[string]any{
 				"type": map[string]any{"type": "string", "enum": logTypes},
-				"id":   map[string]any{"type": []string{"integer", "null"}, "description": "The entry's id, or null for the most recent of this type (for sleep, the latest night)."},
+				"id": map[string]any{"type": []string{"integer", "null"},
+					"description": "The entry's id, or null for the most recent of this type (for sleep, the latest night; for a workout, the latest day's)."},
 			}),
 		},
 		run: handle((*Agent).deleteLog),

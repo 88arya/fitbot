@@ -22,3 +22,24 @@ func (a *Agent) PlanLines(ctx context.Context, userID int64, first time.Time, n 
 	}
 	return out, nil
 }
+
+// WorkoutWeek counts the planned sessions of the week starting monday as of
+// now, like "week of Oct 26: 3 of 8 planned sessions done, 5 to go", and
+// shows each of its days, like "legs done", for tests outside the package.
+func (a *Agent) WorkoutWeek(ctx context.Context, userID int64, monday time.Time) (string, []string, error) {
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	first := pgtype.Date{Time: time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
+	r, err := loadWorkouts(ctx, a.Store, userID, first, addDays(first, 6))
+	if err != nil {
+		return "", nil, err
+	}
+	today := a.localDate(user)
+	var days []string
+	for i := range 7 {
+		days = append(days, r.day(addDays(first, i)).describe(today))
+	}
+	return r.week(first, today), days, nil
+}

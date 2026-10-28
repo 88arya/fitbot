@@ -148,3 +148,17 @@ type User struct {
 	WakeTime         pgtype.Time        `json:"wake_time"`
 	Bedtime          pgtype.Time        `json:"bedtime"`
 }
+
+type Workout struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	ActionID  int64              `json:"action_id"`
+	MessageID int64              `json:"message_id"`
+	LocalDate pgtype.Date        `json:"local_date"`
+	Status    string             `json:"status"`
+	Sessions  []string           `json:"sessions"`
+	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
