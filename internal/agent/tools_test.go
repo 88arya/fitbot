@@ -53,3 +53,25 @@ func TestWaterAmount(t *testing.T) {
 		}
 	}
 }
+
+func TestWeightTrend(t *testing.T) {
+	for _, c := range []struct {
+		t    weightTrend
+		want string
+	}{
+		{weightTrend{}, "last 7 days: no weigh-ins"},
+		{weightTrend{target: 1750, hasTarget: true}, "last 7 days: no weigh-ins; target weight: 175 lbs"},
+		{weightTrend{days: 1, avg: 1824, prevDays: 0}, "last 7 days: 182.4 lbs over 1 day weighed, none the 7 days before to compare"},
+		{weightTrend{days: 3, avg: 1824, prevDays: 2, prev: 1810, target: 1850, hasTarget: true},
+			"last 7 days: 182.4 lbs average over 3 days weighed, up 1.4 lbs from 181 lbs the 7 days before; " +
+				"target weight: 185 lbs, 7-day average 2.6 lbs below"},
+		{weightTrend{days: 2, avg: 1750, prevDays: 5, prev: 1750, target: 1750, hasTarget: true},
+			"last 7 days: 175 lbs average over 2 days weighed, the same as the 7 days before; target weight: 175 lbs, 7-day average on target"},
+		// No weigh-ins this week means no change, even with some before.
+		{weightTrend{prevDays: 4, prev: 1800}, "last 7 days: no weigh-ins"},
+	} {
+		if got := c.t.String(); got != c.want {
+			t.Errorf("%+v = %q\nwant %q", c.t, got, c.want)
+		}
+	}
+}

@@ -27,11 +27,11 @@ var intakeMetrics = []string{"calories", "protein", "carbs", "fat", "water"}
 var maxIntake = map[string]int{"calories": 10000, "protein": 1000, "carbs": 1000, "fat": 1000, "water": 5000}
 
 // logTypes are what edit_log and delete_log change: an intake metric, a
-// night of sleep, a workout, or a supplement log.
-var logTypes = append(slices.Clone(intakeMetrics), "sleep", "workout", "supplement")
+// night of sleep, a workout, a supplement log, or a weigh-in.
+var logTypes = append(slices.Clone(intakeMetrics), "sleep", "workout", "supplement", "weight")
 
 // intakeUnits are the units edit_log takes, plus null for the canonical one.
-var intakeUnits = []any{"cal", "g", "ml", "l", "oz", "hours", nil}
+var intakeUnits = []any{"cal", "g", "ml", "l", "oz", "hours", "lbs", "kg", nil}
 
 // backfillDays is how far back a log or edit may date an amount.
 const backfillDays = 30
@@ -202,6 +202,9 @@ func (a *Agent) editLog(ctx context.Context, c *call, args editLogArgs) (string,
 	if args.Bedtime != nil || args.WakeTime != nil {
 		return "error: bedtime and wake_time are only for sleep", nil
 	}
+	if args.Type == "weight" {
+		return a.editWeight(ctx, c, args)
+	}
 	if args.Amount == nil && args.Date == nil {
 		return "error: no changes given", nil
 	}
@@ -279,6 +282,8 @@ func (a *Agent) deleteLog(ctx context.Context, c *call, args deleteLogArgs) (str
 		return a.deleteWorkout(ctx, c, args.ID)
 	case "supplement":
 		return a.deleteSupplementLog(ctx, c, args.ID)
+	case "weight":
+		return a.deleteWeight(ctx, c, args.ID)
 	}
 	old, m, errText, err := a.targetIntake(ctx, c, args.Type, args.ID)
 	if errText != "" || err != nil {

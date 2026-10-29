@@ -108,7 +108,7 @@ func (m metric) format(v int) string {
 		}
 		return strings.Join(parts, " ")
 	case "weight":
-		return decimal(float64(v)/gramsPerPound, 1) + " lbs"
+		return lbs(tenths(v))
 	}
 	return commas(v) + " g"
 }

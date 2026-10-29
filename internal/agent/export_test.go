@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,4 +43,27 @@ func (a *Agent) WorkoutWeek(ctx context.Context, userID int64, monday time.Time)
 		days = append(days, r.day(addDays(first, i)).describe(today))
 	}
 	return r.week(first, today), days, nil
+}
+
+// WeightNumbers shows end's weight and the trend for the week ending on
+// end, in tenths of a pound, like "day 1820 days 5 avg 1826 prev 6 1838
+// target 1750", for tests outside the package.
+func (a *Agent) WeightNumbers(ctx context.Context, userID int64, end time.Time) (string, error) {
+	day := pgtype.Date{Time: time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
+	t, err := loadWeightTrend(ctx, a.Store, userID, day)
+	if err != nil {
+		return "", err
+	}
+	s := ""
+	for _, l := range t.logs {
+		if l.LocalDate.Time.Equal(day.Time) {
+			s = fmt.Sprintf("day %d ", tenths(int(l.Grams)))
+			break
+		}
+	}
+	s += fmt.Sprintf("days %d avg %d prev %d %d", t.days, t.avg, t.prevDays, t.prev)
+	if t.hasTarget {
+		s += fmt.Sprintf(" target %d", t.target)
+	}
+	return s, nil
 }

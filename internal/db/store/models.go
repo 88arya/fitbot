@@ -182,6 +182,19 @@ type User struct {
 	SupplementsAnswered bool               `json:"supplements_answered"`
 }
 
+type WeightLog struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	ActionID  int64              `json:"action_id"`
+	MessageID int64              `json:"message_id"`
+	LocalDate pgtype.Date        `json:"local_date"`
+	Grams     int32              `json:"grams"`
+	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Workout struct {
 	ID        int64              `json:"id"`
 	UserID    int64              `json:"user_id"`

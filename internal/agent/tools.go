@@ -181,15 +181,29 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name:        "log_weight",
+			Description: "Log a weigh-in, using the number the user gave. Never estimate: if they gave no number, ask for one.",
+			Parameters: object(map[string]any{
+				"weight": map[string]any{"type": "number", "description": "The weight in unit."},
+				"unit": map[string]any{"type": []string{"string", "null"}, "enum": []any{"lbs", "kg", nil},
+					"description": "kg only if the user said kg; null for lbs."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day they weighed in, YYYY-MM-DD, when they name one like \"yesterday\". null for today."},
+			}),
+		},
+		run: handle((*Agent).logWeight),
+	},
+	{
+		spec: llm.Tool{
 			Name:        "edit_log",
-			Description: "Change a logged amount, night of sleep, workout, or supplement log. Pass null for the fields that are not changing.",
+			Description: "Change a logged amount, night of sleep, workout, supplement log, or weigh-in. Pass null for the fields that are not changing.",
 			Parameters: object(map[string]any{
 				"type": map[string]any{"type": "string", "enum": logTypes},
 				"id": map[string]any{"type": []string{"integer", "null"},
 					"description": "The entry's id, or null for the most recent of this type (for sleep, the latest night; for a workout or supplement, the latest day's)."},
 				"amount": map[string]any{"type": []string{"number", "null"}, "description": "The corrected amount, in unit."},
 				"unit": map[string]any{"type": []string{"string", "null"}, "enum": intakeUnits,
-					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water; hours for sleep. null means cal, g, ml, or hours."},
+					"description": "cal for calories; g for protein, carbs, and fat; ml, l, or oz for water; hours for sleep; lbs or kg for weight. null means cal, g, ml, hours, or lbs."},
 				"bedtime": map[string]any{"type": []string{"string", "null"},
 					"description": "Sleep only: the corrected bedtime, 24-hour HH:MM."},
 				"wake_time": map[string]any{"type": []string{"string", "null"},
@@ -207,7 +221,7 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name:        "delete_log",
-			Description: "Delete a logged amount, night of sleep, workout, or supplement log.",
+			Description: "Delete a logged amount, night of sleep, workout, supplement log, or weigh-in.",
 			Parameters: object(map[string]any{
 				"type": map[string]any{"type": "string", "enum": logTypes},
 				"id": map[string]any{"type": []string{"integer", "null"},

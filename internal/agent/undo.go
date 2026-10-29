@@ -38,6 +38,9 @@ const (
 	undoDeleteSupplementLogs  = "delete_supplement_logs"
 	undoRestoreSupplementLog  = "restore_supplement_log"
 	undoUndeleteSupplementLog = "undelete_supplement_log"
+	undoDeleteWeight          = "delete_weight"
+	undoRestoreWeight         = "restore_weight"
+	undoUndeleteWeight        = "undelete_weight"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -47,21 +50,21 @@ type undoRecord struct {
 	// Desc says what the action did, like "logging 350 cal and 30 g
 	// protein", for the reply to "undo".
 	Desc string `json:"desc"`
-	// ID is the memory, logged amount, night, workout, supplement, or
-	// supplement log the action changed, and IDs the amounts log_intake or
-	// the logs log_supplement added.
+	// ID is the memory, logged amount, night, workout, supplement,
+	// supplement log, or weigh-in the action changed, and IDs the amounts
+	// log_intake or the logs log_supplement added.
 	ID      int64         `json:"id,omitempty"`
 	IDs     []int64       `json:"ids,omitempty"`
 	Fact    string        `json:"fact,omitempty"`
 	Profile *profileState `json:"profile,omitempty"`
 	// Day is the local day the action changed, as YYYY-MM-DD: the day of
 	// set_goals' or set_schedule's change, or the day a logged amount,
-	// night, or workout was on before it.
+	// night, workout, supplement log, or weigh-in was on before it.
 	Day   string       `json:"day,omitempty"`
 	Goals []goalBefore `json:"goals,omitempty"`
-	// Amount is a logged amount's value, or a night's minutes, before an
-	// edit, and Bedtime and WakeTime the night's times, in microseconds
-	// since midnight.
+	// Amount is a logged amount's value, a night's minutes, or a
+	// weigh-in's grams, before an edit, and Bedtime and WakeTime the
+	// night's times, in microseconds since midnight.
 	Amount   *int32 `json:"amount,omitempty"`
 	Bedtime  *int64 `json:"bedtime,omitempty"`
 	WakeTime *int64 `json:"wake_time,omitempty"`
@@ -73,8 +76,8 @@ type undoRecord struct {
 	// Answered whether setup's supplement question was answered.
 	Plan     *supplementPlanState `json:"plan,omitempty"`
 	Answered *bool                `json:"answered,omitempty"`
-	// Metrics are the intake metrics, sleep, workout, or supplement the
-	// action changed, whose status for Day the reply to "undo" reports.
+	// Metrics are the intake metrics, sleep, workout, supplement, or weight
+	// the action changed, whose status for Day the reply to "undo" reports.
 	Metrics []string `json:"metrics,omitempty"`
 	// Schedule is the schedule set_schedule replaced on Day, if one started
 	// that day, and Plans the day plans a change touched, as they were.
@@ -346,6 +349,23 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		}
 		_, err = q.UpdateSupplementLog(ctx, store.UpdateSupplementLogParams{ID: rec.ID, UserID: userID, LocalDate: day, Status: *rec.Status})
 		return err
+	case undoDeleteWeight:
+		_, err := q.SetWeightDeleted(ctx, store.SetWeightDeletedParams{ID: rec.ID, UserID: userID,
+			DeletedAt: pgtype.Timestamptz{Time: a.now(), Valid: true}})
+		return err
+	case undoUndeleteWeight:
+		_, err := q.SetWeightDeleted(ctx, store.SetWeightDeletedParams{ID: rec.ID, UserID: userID})
+		return err
+	case undoRestoreWeight:
+		if rec.Amount == nil {
+			return errors.New("no weight to restore")
+		}
+		day, err := parseDay(rec.Day)
+		if err != nil {
+			return err
+		}
+		_, err = q.UpdateWeight(ctx, store.UpdateWeightParams{ID: rec.ID, UserID: userID, LocalDate: day, Grams: *rec.Amount})
+		return err
 	case undoRestoreSchedule:
 		day, err := parseDay(rec.Day)
 		if err != nil {
@@ -367,7 +387,8 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 }
 
 // undoReply says what was undone and, for logged amounts, nights,
-// workouts, supplements, and training plans, where they now stand.
+// workouts, supplements, weigh-ins, and training plans, where they now
+// stand.
 func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, act store.Action) (string, error) {
 	var rec undoRecord
 	if err := json.Unmarshal(act.Undo, &rec); err != nil {
@@ -408,6 +429,13 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 	}
 	if slices.Contains(rec.Metrics, "supplement") {
 		st, err := a.supplementStatus(ctx, q, user, day)
+		if err != nil {
+			return "", err
+		}
+		return reply + " " + st.forUser(), nil
+	}
+	if slices.Contains(rec.Metrics, "weight") {
+		st, err := a.weightStatus(ctx, q, user, day)
 		if err != nil {
 			return "", err
 		}
