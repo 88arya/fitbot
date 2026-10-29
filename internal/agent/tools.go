@@ -67,12 +67,18 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name:        "set_profile",
-			Description: "Save the user's profile fields. Pass null for fields that are not changing.",
+			Description: "Save the user's profile fields and check-in settings. Pass null for fields that are not changing.",
 			Parameters: object(map[string]any{
 				"name":      map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
 				"timezone":  map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
 				"wake_time": map[string]any{"type": []string{"string", "null"}, "description": "When the user usually wakes up, 24-hour HH:MM."},
 				"bedtime":   map[string]any{"type": []string{"string", "null"}, "description": "When the user usually goes to bed, 24-hour HH:MM."},
+				"morning_checkin": map[string]any{"type": []string{"string", "null"},
+					"description": "When the morning check-in goes, 24-hour HH:MM, or default to send it at the wake time."},
+				"night_checkin": map[string]any{"type": []string{"string", "null"},
+					"description": "When the night check-in goes, 24-hour HH:MM, or default to send it 30 minutes before bedtime."},
+				"mute_until": map[string]any{"type": []string{"string", "null"},
+					"description": "Mute every scheduled text until this local time, YYYY-MM-DD HH:MM, or off to unmute."},
 			}),
 		},
 		run: handle((*Agent).setProfile),
@@ -455,10 +461,13 @@ func canonical(raw string) ([]byte, error) {
 }
 
 type profileArgs struct {
-	Name     *string `json:"name"`
-	Timezone *string `json:"timezone"`
-	WakeTime *string `json:"wake_time"`
-	Bedtime  *string `json:"bedtime"`
+	Name           *string `json:"name"`
+	Timezone       *string `json:"timezone"`
+	WakeTime       *string `json:"wake_time"`
+	Bedtime        *string `json:"bedtime"`
+	MorningCheckin *string `json:"morning_checkin"`
+	NightCheckin   *string `json:"night_checkin"`
+	MuteUntil      *string `json:"mute_until"`
 }
 
 func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (string, error) {
@@ -491,15 +500,78 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 		}
 		*f.dst = t
 	}
-	if !p.Name.Valid && !p.Timezone.Valid && !p.WakeTime.Valid && !p.Bedtime.Valid {
-		return "error: no fields given", nil
-	}
 	old, err := c.q.GetUser(ctx, c.userID)
 	if err != nil {
 		return "", err
 	}
-	if _, err := c.q.UpdateProfile(ctx, p); err != nil {
-		return "", err
+	// Check-in times and the mute are set exactly, so default and off can
+	// clear them.
+	checkins := store.SetCheckinsParams{ID: c.userID, MorningCheckin: old.MorningCheckin, NightCheckin: old.NightCheckin,
+		MutedUntil: old.MutedUntil}
+	var settings []string
+	for _, f := range []struct {
+		name, label, def string
+		arg              *string
+		dst              *pgtype.Time
+	}{
+		{"morning_checkin", "morning check-in", "the wake time", args.MorningCheckin, &checkins.MorningCheckin},
+		{"night_checkin", "night check-in", "30 minutes before bedtime", args.NightCheckin, &checkins.NightCheckin},
+	} {
+		if f.arg == nil {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(*f.arg), "default") {
+			*f.dst = pgtype.Time{}
+			settings = append(settings, f.label+" back to "+f.def)
+			continue
+		}
+		t, ok := timeOfDay(*f.arg)
+		if !ok {
+			return fmt.Sprintf("error: %s %q is not a 24-hour time like 07:30, or default", f.name, *f.arg), nil
+		}
+		*f.dst = t
+		settings = append(settings, f.label+" to "+clock(micros(t), "3:04 PM"))
+	}
+	if args.MuteUntil != nil {
+		tz := old.Timezone
+		if p.Timezone.Valid {
+			tz = p.Timezone
+		}
+		loc := a.location(store.User{Timezone: tz})
+		arg := strings.TrimSpace(*args.MuteUntil)
+		if strings.EqualFold(arg, "off") {
+			if !old.MutedUntil.Valid || !old.MutedUntil.Time.After(a.now()) {
+				return "error: scheduled texts aren't muted", nil
+			}
+			checkins.MutedUntil = pgtype.Timestamptz{}
+			settings = append(settings, "mute off")
+		} else {
+			until, err := time.ParseInLocation(muteLayout, arg, loc)
+			switch {
+			case err != nil:
+				return fmt.Sprintf("error: mute_until %q is not a local time like 2026-10-30 09:00, or off", arg), nil
+			case !until.After(a.now()):
+				return "error: mute_until is in the past; it's " + a.now().In(loc).Format(muteLayout) + " now", nil
+			case until.Sub(a.now()) > maxMute:
+				return fmt.Sprintf("error: scheduled texts can be muted for at most %d days", int(maxMute/(24*time.Hour))), nil
+			}
+			checkins.MutedUntil = pgtype.Timestamptz{Time: until, Valid: true}
+			settings = append(settings, "mute until "+until.Format("Mon Jan 2, 3:04 PM"))
+		}
+	}
+	profile := p.Name.Valid || p.Timezone.Valid || p.WakeTime.Valid || p.Bedtime.Valid
+	if !profile && len(settings) == 0 {
+		return "error: no fields given", nil
+	}
+	if profile {
+		if _, err := c.q.UpdateProfile(ctx, p); err != nil {
+			return "", err
+		}
+	}
+	if len(settings) > 0 {
+		if err := c.q.SetCheckins(ctx, checkins); err != nil {
+			return "", err
+		}
 	}
 	var changed []string
 	if p.Name.Valid {
@@ -516,10 +588,45 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 	}
 	c.undo = &undoRecord{
 		Op:      undoRestoreProfile,
-		Desc:    "setting your " + strings.Join(changed, ", "),
+		Desc:    "setting your " + strings.Join(append(changed, settings...), ", "),
 		Profile: profileOf(old),
 	}
-	return "saved", nil
+	// A change that moves the check-ins says where they are now.
+	if len(settings) == 0 && !p.WakeTime.Valid && !p.Bedtime.Valid {
+		return "saved", nil
+	}
+	user, err := c.q.GetUser(ctx, c.userID)
+	if err != nil {
+		return "", err
+	}
+	return "saved. Now: " + a.checkinTimes(user) + ".", nil
+}
+
+// checkinTimes shows when the check-ins go and any mute, like "morning
+// check-in at 8:00 AM (the wake time), night check-in at 9:30 PM (30
+// minutes before bedtime)".
+func (a *Agent) checkinTimes(user store.User) string {
+	morning, night := " (the wake time)", " (30 minutes before bedtime)"
+	switch {
+	case user.MorningCheckin.Valid:
+		morning = ""
+	case !user.WakeTime.Valid:
+		morning = " (the default wake time)"
+	}
+	switch {
+	case user.NightCheckin.Valid:
+		night = ""
+	case nightTime(user) == lastNight:
+		night = " (the latest it goes, for a bedtime after midnight)"
+	case !user.Bedtime.Valid:
+		night = " (30 minutes before the default bedtime)"
+	}
+	s := "morning check-in at " + clock(morningTime(user), "3:04 PM") + morning +
+		", night check-in at " + clock(nightTime(user), "3:04 PM") + night
+	if user.MutedUntil.Valid && user.MutedUntil.Time.After(a.now()) {
+		s += "; scheduled texts muted until " + user.MutedUntil.Time.In(a.location(user)).Format("Mon Jan 2, 3:04 PM")
+	}
+	return s
 }
 
 func cleanFact(s string) (string, bool) {

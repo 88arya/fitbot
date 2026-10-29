@@ -1,9 +1,9 @@
 // Package scheduler sends the texts Fitbot sends on its own, like the
 // morning check-in, at each user's local time.
 //
-// Each text is a row in deliveries, keyed on user, kind, and local day, so a
-// day is never sent twice. Every time comes from Now instead of the database
-// clock, so tests can run weeks of fake time.
+// Each text is a row in deliveries, keyed on user, kind, local day, and
+// slot, so a day's text is never sent twice. Every time comes from Now
+// instead of the database clock, so tests can run weeks of fake time.
 package scheduler
 
 import (
@@ -64,25 +64,32 @@ func timeOfDay(t pgtype.Time, def time.Duration) time.Duration {
 	return time.Duration(t.Microseconds) * time.Microsecond
 }
 
-// Checkin is a text sent once a day at a local time.
-type Checkin struct {
+// Due is one text due on a local day.
+type Due struct {
 	Kind string
+	// Slot tells apart a kind's texts on one day, like a supplement
+	// reminder for each time; "" for a kind sent once a day.
+	Slot string
 	// At is the user's local time to send it, as time since midnight.
-	At   func(store.User) time.Duration
-	Text func(store.User) string
+	At time.Duration
 }
 
-// MorningCheckin goes out at the user's wake time. Its text is a placeholder
-// until goals and the training schedule exist to fill it in.
-var MorningCheckin = Checkin{
-	Kind: "morning_checkin",
-	At:   WakeTime,
-	Text: func(u store.User) string {
-		if u.Name.Valid {
-			return "Good morning, " + u.Name.String + ". How did you sleep?"
-		}
-		return "Good morning. How did you sleep?"
-	},
+// Text is a scheduled text as it goes out.
+type Text struct {
+	// Body is the text; empty means it is no longer needed.
+	Body string
+	// Asks is what the text asks about, as JSON, stored with the delivery so
+	// a short reply like "done" can answer it. nil when it asks nothing.
+	Asks []byte
+}
+
+// Checkins says what to send and when. Due is asked again when a text is
+// about to go out, so a text whose slot is gone or has moved is not sent.
+type Checkins interface {
+	// Due lists the texts due on the user's local day.
+	Due(ctx context.Context, u store.User, day pgtype.Date) ([]Due, error)
+	// Text builds one of the day's texts when it is sent.
+	Text(ctx context.Context, u store.User, day pgtype.Date, kind, slot string) (Text, error)
 }
 
 type Scheduler struct {
@@ -91,7 +98,7 @@ type Scheduler struct {
 	// Recipients are the only numbers texted, like the webhook's sender
 	// allowlist, so removing a number stops its scheduled texts too.
 	Recipients []string
-	Checkins   []Checkin
+	Checkins   Checkins
 	// Grace is how late a text may still go out; later ones are skipped.
 	// Zero means 30 minutes.
 	Grace time.Duration
@@ -172,8 +179,8 @@ func (s *Scheduler) reconcile(ctx context.Context, q *store.Queries) error {
 	return err
 }
 
-// plan makes sure every recipient with a timezone has a row for each
-// check-in's next occurrence.
+// plan makes sure every recipient with a timezone has a row for each text
+// due today that is not yet more than grace late.
 func (s *Scheduler) plan(ctx context.Context, q *store.Queries) error {
 	users, err := q.ListUsersWithTimezone(ctx)
 	if err != nil {
@@ -189,35 +196,43 @@ func (s *Scheduler) plan(ctx context.Context, q *store.Queries) error {
 			slog.Warn("skipping user with bad timezone", "user_id", u.ID, "timezone", u.Timezone.String)
 			continue
 		}
-		for _, c := range s.Checkins {
-			day, at := c.next(now, loc, c.At(u), s.grace())
+		day := localDay(now, loc)
+		due, err := s.Checkins.Due(ctx, u, day)
+		if err != nil {
+			// One user's failure should not hold up everyone else's texts.
+			slog.Error("listing due texts", "user_id", u.ID, "err", err)
+			continue
+		}
+		for _, d := range due {
+			at := atTime(day, d.At, loc)
+			if now.Sub(at) > s.grace() {
+				continue
+			}
 			if err := q.PlanDelivery(ctx, store.PlanDeliveryParams{
 				UserID:      u.ID,
-				Kind:        c.Kind,
+				Kind:        d.Kind,
 				LocalDate:   day,
+				Slot:        d.Slot,
 				ScheduledAt: ts(at),
 				Now:         ts(now),
 			}); err != nil {
-				// One user's failure should not hold up everyone else's texts.
-				slog.Error("planning delivery", "user_id", u.ID, "kind", c.Kind, "err", err)
+				slog.Error("planning delivery", "user_id", u.ID, "kind", d.Kind, "err", err)
 			}
 		}
 	}
 	return nil
 }
 
-// next returns the local day and time of the check-in's next occurrence at
-// tod, time since local midnight: today's if it is not yet more than grace
-// late, otherwise tomorrow's.
-func (c Checkin) next(now time.Time, loc *time.Location, tod, grace time.Duration) (pgtype.Date, time.Time) {
+// localDay is now's date in loc.
+func localDay(now time.Time, loc *time.Location) pgtype.Date {
 	y, m, d := now.In(loc).Date()
-	hour, minute := int(tod/time.Hour), int(tod%time.Hour/time.Minute)
-	at := time.Date(y, m, d, hour, minute, 0, 0, loc)
-	if now.Sub(at) > grace {
-		d++
-		at = time.Date(y, m, d, hour, minute, 0, 0, loc)
-	}
-	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}, at
+	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}
+}
+
+// atTime is tod, time since local midnight, on day in loc.
+func atTime(day pgtype.Date, tod time.Duration, loc *time.Location) time.Time {
+	y, m, d := day.Time.Date()
+	return time.Date(y, m, d, int(tod/time.Hour), int(tod%time.Hour/time.Minute), 0, 0, loc)
 }
 
 // deliver sends one claimed delivery. The text is stored and linked before
@@ -225,12 +240,7 @@ func (c Checkin) next(now time.Time, loc *time.Location, tod, grace time.Duratio
 // have gone out. A database error leaves the delivery claimed for reconcile
 // to settle.
 func (s *Scheduler) deliver(ctx context.Context, q *store.Queries, d store.Delivery) {
-	log := slog.With("delivery_id", d.ID, "kind", d.Kind, "user_id", d.UserID)
-	c, ok := s.checkin(d.Kind)
-	if !ok {
-		s.finish(ctx, q, d, "failed", "no check-in of this kind")
-		return
-	}
+	log := slog.With("delivery_id", d.ID, "kind", d.Kind, "slot", d.Slot, "user_id", d.UserID)
 	if late := s.now().Sub(d.ScheduledAt.Time); late > s.grace() {
 		log.Info("skipped late delivery", "late", late.Round(time.Second))
 		s.finish(ctx, q, d, "skipped", fmt.Sprintf("late by %s", late.Round(time.Second)))
@@ -245,7 +255,42 @@ func (s *Scheduler) deliver(ctx context.Context, q *store.Queries, d store.Deliv
 		s.finish(ctx, q, d, "skipped", "not a recipient")
 		return
 	}
-	text := c.Text(user)
+	// A text due while muted is dropped, not held until the mute ends.
+	if user.MutedUntil.Valid && user.MutedUntil.Time.After(s.now()) {
+		s.finish(ctx, q, d, "skipped", "muted")
+		return
+	}
+	if !user.Timezone.Valid {
+		s.finish(ctx, q, d, "skipped", "no timezone")
+		return
+	}
+	loc, err := time.LoadLocation(user.Timezone.String)
+	if err != nil {
+		s.finish(ctx, q, d, "skipped", "bad timezone")
+		return
+	}
+	// The text goes out only if it is still due then, like a gym reminder
+	// after the workout is logged or the session moved.
+	due, err := s.Checkins.Due(ctx, user, d.LocalDate)
+	if err != nil {
+		log.Error("listing due texts", "err", err)
+		return
+	}
+	if !slices.ContainsFunc(due, func(x Due) bool {
+		return x.Kind == d.Kind && x.Slot == d.Slot && atTime(d.LocalDate, x.At, loc).Equal(d.ScheduledAt.Time)
+	}) {
+		s.finish(ctx, q, d, "skipped", "no longer due")
+		return
+	}
+	text, err := s.Checkins.Text(ctx, user, d.LocalDate, d.Kind, d.Slot)
+	if err != nil {
+		log.Error("building text", "err", err)
+		return
+	}
+	if text.Body == "" {
+		s.finish(ctx, q, d, "skipped", "nothing to send")
+		return
+	}
 	msg, err := s.store(ctx, d, text)
 	if errors.Is(err, errLostClaim) {
 		log.Warn("delivery was taken over while stalled; not sending")
@@ -257,7 +302,7 @@ func (s *Scheduler) deliver(ctx context.Context, q *store.Queries, d store.Deliv
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	providerID, err := s.Sender.Send(sendCtx, user.Phone, text)
+	providerID, err := s.Sender.Send(sendCtx, user.Phone, text.Body)
 	cancel()
 	if err != nil {
 		s.sendFailed(ctx, q, d, msg, err)
@@ -276,30 +321,22 @@ func (s *Scheduler) deliver(ctx context.Context, q *store.Queries, d store.Deliv
 	log.Info("scheduled text sent", "message_id", msg.ID, "provider_id", providerID)
 }
 
-func (s *Scheduler) checkin(kind string) (Checkin, bool) {
-	for _, c := range s.Checkins {
-		if c.Kind == kind {
-			return c, true
-		}
-	}
-	return Checkin{}, false
-}
-
 var errLostClaim = errors.New("delivery no longer claimed by this worker")
 
 // store saves the outbound text and links it to the delivery in one
 // transaction, or returns errLostClaim if the claim was taken over.
-func (s *Scheduler) store(ctx context.Context, d store.Delivery, text string) (store.Message, error) {
+func (s *Scheduler) store(ctx context.Context, d store.Delivery, text Text) (store.Message, error) {
 	var msg store.Message
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		var err error
-		msg, err = q.InsertOutbound(ctx, store.InsertOutboundParams{UserID: d.UserID, Body: text})
+		msg, err = q.InsertOutbound(ctx, store.InsertOutboundParams{UserID: d.UserID, Body: text.Body})
 		if err != nil {
 			return err
 		}
 		n, err := q.LinkDeliveryMessage(ctx, store.LinkDeliveryMessageParams{
 			MessageID: pgtype.Int8{Int64: msg.ID, Valid: true},
+			Asks:      text.Asks,
 			Now:       ts(s.now()),
 			ID:        d.ID,
 			Attempts:  d.Attempts,

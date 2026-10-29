@@ -49,6 +49,7 @@ type Sim struct {
 
 	handler http.Handler
 	priv    ed25519.PrivateKey
+	tc      *telnyx.Client
 
 	mu       sync.Mutex
 	now      time.Time
@@ -135,6 +136,7 @@ func New(t *testing.T, start time.Time) *Sim {
 		Store:           s.Store,
 		LLM:             llm.New(openAI.URL, "key", "test-model", 1, 2),
 		DefaultTimezone: start.Location().String(),
+		WaterNudges:     1,
 		Now:             s.Now,
 	}
 	s.handler = server.New(pool, &server.SMS{
@@ -143,14 +145,21 @@ func New(t *testing.T, start time.Time) *Sim {
 		Agent:          s.Agent,
 		AllowedSenders: []string{Phone},
 	})
+	s.tc = tc
+	s.Restart()
+	return s
+}
+
+// Restart replaces the scheduler with a new one, as a restarted process
+// would have.
+func (s *Sim) Restart() {
 	s.Scheduler = &scheduler.Scheduler{
-		Pool:       pool,
-		Sender:     tc,
+		Pool:       s.Pool,
+		Sender:     s.tc,
 		Recipients: []string{Phone},
-		Checkins:   []scheduler.Checkin{scheduler.MorningCheckin},
+		Checkins:   s.Agent.Checkins(),
 		Now:        s.Now,
 	}
-	return s
 }
 
 // ResetSetup clears the simulated user's profile, goals, schedule, and

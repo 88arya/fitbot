@@ -27,3 +27,8 @@ LIMIT 1;
 
 -- name: MarkUndone :exec
 UPDATE actions SET undone_at = now(), undone_by = @message_id WHERE id = @id;
+
+-- name: MessageAction :one
+-- The first call of tool the text message_id applied, if any. Rejected
+-- calls are rolled back, so only applied ones are found.
+SELECT * FROM actions WHERE message_id = @message_id AND tool = @tool ORDER BY id LIMIT 1;

@@ -15,6 +15,7 @@ import (
 	"github.com/88arya/fitbot/internal/db/store"
 	"github.com/88arya/fitbot/internal/telnyx"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -119,6 +120,18 @@ func newEnv(t *testing.T, start time.Time) *env {
 	return &env{t: t, ctx: ctx, pool: pool, clock: c, sender: &fakeSender{clock: c}}
 }
 
+// morning is a check-in at each user's wake time, standing in for the
+// agent's texts.
+type morning struct{}
+
+func (morning) Due(_ context.Context, u store.User, _ pgtype.Date) ([]Due, error) {
+	return []Due{{Kind: "morning_checkin", At: WakeTime(u)}}, nil
+}
+
+func (morning) Text(_ context.Context, u store.User, _ pgtype.Date, _, _ string) (Text, error) {
+	return Text{Body: "Good morning, " + u.Name.String + ". How did you sleep?"}, nil
+}
+
 // scheduler returns a new scheduler on the shared database and clock, as a
 // restarted process would be, texting every user added so far.
 func (e *env) scheduler() *Scheduler {
@@ -126,7 +139,7 @@ func (e *env) scheduler() *Scheduler {
 		Pool:       e.pool,
 		Sender:     e.sender,
 		Recipients: slices.Clone(e.phones),
-		Checkins:   []Checkin{MorningCheckin},
+		Checkins:   morning{},
 		Now:        e.clock.now,
 	}
 }
@@ -374,7 +387,7 @@ func TestLostClaim(t *testing.T) {
 	if _, err := e.pool.Exec(e.ctx, `UPDATE deliveries SET attempts = attempts + 1 WHERE id = $1`, claimed[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.store(e.ctx, claimed[0], "Good morning"); !errors.Is(err, errLostClaim) {
+	if _, err := s.store(e.ctx, claimed[0], Text{Body: "Good morning"}); !errors.Is(err, errLostClaim) {
 		t.Fatalf("store err = %v, want errLostClaim", err)
 	}
 	var msgs int
@@ -551,5 +564,99 @@ func TestWakeTime(t *testing.T) {
 		if fmt.Sprint(got) != c.want {
 			t.Errorf("%s: sent at %v, want %s", c.name, got, c.want)
 		}
+	}
+}
+
+// texts is a Checkins whose due texts the test changes as it goes.
+type texts struct {
+	mu   sync.Mutex
+	due  []Due
+	body map[string]string
+	asks []byte
+}
+
+func (x *texts) set(due []Due, body map[string]string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.due, x.body = due, body
+}
+
+func (x *texts) Due(context.Context, store.User, pgtype.Date) ([]Due, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return slices.Clone(x.due), nil
+}
+
+func (x *texts) Text(_ context.Context, _ store.User, _ pgtype.Date, kind, slot string) (Text, error) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return Text{Body: x.body[kind+"/"+slot], Asks: x.asks}, nil
+}
+
+// TestSlots sends several texts of one kind a day, each once, and skips
+// one whose slot is gone or moved, one with nothing to say, and every text
+// while the user is muted.
+func TestSlots(t *testing.T) {
+	const tz = "America/Toronto"
+	e := newEnv(t, local(tz, 2026, 10, 20, 6, 0))
+	id, phone := e.user(tz)
+	x := &texts{asks: []byte(`{"supplements": ["creatine"]}`)}
+	s := e.scheduler()
+	s.Checkins = x
+	x.set([]Due{
+		{Kind: "reminder", Slot: "09:00", At: 9 * time.Hour},
+		{Kind: "reminder", Slot: "12:00", At: 12 * time.Hour},
+		{Kind: "reminder", Slot: "15:00", At: 15 * time.Hour},
+		{Kind: "nudge", Slot: "1", At: 13 * time.Hour},
+		{Kind: "late", At: 18 * time.Hour},
+	}, map[string]string{"reminder/09:00": "nine", "reminder/12:00": "noon", "reminder/15:00": "three", "late/": "six"})
+	e.tickAt(s, local(tz, 2026, 10, 20, 6, 0))
+	e.tickAt(s, local(tz, 2026, 10, 20, 9, 0))
+	e.tickAt(s, local(tz, 2026, 10, 20, 9, 1))
+	// Noon's slot is dropped, like a reminder for a dose already taken, so
+	// its planned row is skipped, and three o'clock's moves to 4:00 under the
+	// same slot, so its row moves with it.
+	x.set([]Due{
+		{Kind: "reminder", Slot: "09:00", At: 9 * time.Hour},
+		{Kind: "reminder", Slot: "15:00", At: 16 * time.Hour},
+		{Kind: "nudge", Slot: "1", At: 13 * time.Hour},
+		{Kind: "late", At: 18 * time.Hour},
+	}, map[string]string{"reminder/09:00": "nine", "reminder/15:00": "four", "late/": "six"})
+	e.tickAt(s, local(tz, 2026, 10, 20, 12, 0))
+	// The nudge has nothing to say.
+	e.tickAt(s, local(tz, 2026, 10, 20, 13, 0))
+	e.tickAt(s, local(tz, 2026, 10, 20, 16, 0))
+	if _, err := e.pool.Exec(e.ctx, `UPDATE users SET muted_until = $2 WHERE id = $1`, id,
+		local(tz, 2026, 10, 20, 18, 30)); err != nil {
+		t.Fatal(err)
+	}
+	e.tickAt(s, local(tz, 2026, 10, 20, 18, 0))
+
+	var got []string
+	for _, txt := range e.sender.to(phone) {
+		got = append(got, txt.at.Format("15:04 ")+txt.body)
+	}
+	if want := "[09:00 nine 16:00 four]"; fmt.Sprint(got) != want {
+		t.Errorf("sent %v, want %s", got, want)
+	}
+	rows, err := e.pool.Query(e.ctx, `SELECT kind || '/' || slot || ' ' || to_char(scheduled_at AT TIME ZONE $2, 'HH24:MI') || ' ' ||
+		status || coalesce(' (' || error || ')', '') || coalesce(' ' || asks::text, '')
+		FROM deliveries WHERE user_id = $1 ORDER BY scheduled_at, id`, id, tz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`reminder/09:00 09:00 sent {"supplements": ["creatine"]}`,
+		"reminder/12:00 12:00 skipped (no longer due)",
+		"nudge/1 13:00 skipped (nothing to send)",
+		`reminder/15:00 16:00 sent {"supplements": ["creatine"]}`,
+		"late/ 18:00 skipped (muted)",
+	}
+	if fmt.Sprint(statuses) != fmt.Sprint(want) {
+		t.Errorf("deliveries =\n%v\nwant\n%v", statuses, want)
 	}
 }

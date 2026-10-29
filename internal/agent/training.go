@@ -906,7 +906,9 @@ func (a *Agent) trainingSection(ctx context.Context, user store.User) (string, e
 		"in order with weekday null and rest days as [\"rest\"], and set cycle_day_today if the user says where they are in it. " +
 		"Name sessions in short lowercase words, like push, pull, legs, upper, lower, full body, cardio. If the user doesn't follow " +
 		"a schedule, save kind null. Change one day's plan, today or later, with plan_session: skip it ahead of time, move it to " +
-		"a later day, set the time they're going, or clear a skip or move. Use the days above for what is planned; never work it " +
-		"out yourself.\n")
+		"a later day, set the time they're going, or clear a skip or move. When the user says when they're going, like \"at 6\" " +
+		"in reply to the morning check-in, save it with plan_session change time; the gym reminder and follow-up follow it. If " +
+		"the time is loose, like \"after work\", ask for a clock time instead of guessing. Use the days above for what is " +
+		"planned; never work it out yourself.\n")
 	return b.String(), nil
 }

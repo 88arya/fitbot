@@ -46,6 +46,14 @@ type Agent struct {
 	// GoalBand is how far from the goal, in percent, a day's calories,
 	// carbs, or fat can be and still count as on goal; zero means 10.
 	GoalBand int
+	// GymFollowup is how long after the gym reminder "Did you make it to the
+	// gym?" goes, if nothing is logged; zero means 2 hours.
+	GymFollowup time.Duration
+	// SupplementReping is how long after a supplement reminder it goes
+	// again, if nothing is logged; zero means it doesn't.
+	SupplementReping time.Duration
+	// WaterNudges is the most water nudges a day; zero means none.
+	WaterNudges int
 	// Now returns the current time; nil means time.Now. Tests set it.
 	Now func() time.Time
 }
@@ -188,15 +196,29 @@ func (a *Agent) localDate(user store.User) pgtype.Date {
 	return pgtype.Date{Time: time.Date(y, m, d, 0, 0, 0, 0, time.UTC), Valid: true}
 }
 
-// fastPath answers texts that need no LLM, like "undo" and a bare water
-// amount, and reports whether it did. During setup a bare amount is more
-// likely an answer to a goal question, like "2L" for the water goal, so it
-// goes to the LLM instead.
+// fastPath answers texts that need no LLM, like "undo", "snooze", a bare
+// water amount, and "yes" or "done" in reply to a check-in, and reports
+// whether it did. During setup a bare amount is more likely an answer to a
+// goal question, like "2L" for the water goal, so it goes to the LLM
+// instead.
 func (a *Agent) fastPath(ctx context.Context, userID int64, in store.Message, inSetup bool) (string, bool, error) {
 	if isUndo(in.Body) {
 		reply, err := a.undo(ctx, userID, in.ID)
 		if err != nil {
 			return "", true, fmt.Errorf("undoing: %w", err)
+		}
+		return reply, true, nil
+	}
+	if d, ok := snoozeFor(in.Body); ok || unmuteText.MatchString(in.Body) {
+		reply, err := a.snooze(ctx, userID, in.ID, d)
+		if err != nil {
+			return "", true, fmt.Errorf("snoozing: %w", err)
+		}
+		return reply, true, nil
+	}
+	if reply, ok, err := a.checkinReply(ctx, userID, in); err != nil || ok {
+		if err != nil {
+			return "", true, fmt.Errorf("answering check-in: %w", err)
 		}
 		return reply, true, nil
 	}
@@ -311,7 +333,15 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			strings.Join(labels, "; "), clock(scheduler.DefaultWake, "15:04"), clock(scheduler.DefaultBedtime, "15:04"))
 	}
 	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile. " +
-		"The morning check-in is sent at the wake time.\n")
+		"Scheduled texts: " + a.checkinTimes(user) + ".\n" +
+		"Fitbot texts on its own, worded by code: the morning check-in (today's session, goals, supplements, and how they slept), " +
+		"the night check-in (today's totals, workouts, and supplements), a gym reminder at the session's time and \"Did you make " +
+		"it to the gym?\" later if nothing is logged, supplement reminders at their times, and a water nudge when well behind. " +
+		"Change a check-in time with set_profile morning_checkin or night_checkin, or default to follow the wake time or " +
+		"bedtime again. Mute every scheduled text until a time with mute_until, like \"no texts until tomorrow 9am\", or off " +
+		"to unmute; \"snooze 2h\" and \"unmute\" texts do this without you. Answer a reply to a scheduled text with the usual " +
+		"tools: a sleep amount with log_sleep, \"going at 6\" with plan_session, \"skipped, going tomorrow\" with plan_session " +
+		"move. Short replies like \"yes\" or \"done\" are handled before you when the text asked about one thing.\n")
 
 	b.WriteString("\n## Goals\n")
 	for _, m := range metrics {

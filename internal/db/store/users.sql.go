@@ -12,7 +12,7 @@ import (
 )
 
 const getUser = `-- name: GetUser :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered FROM users WHERE id = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -28,12 +28,15 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.WakeTime,
 		&i.Bedtime,
 		&i.SupplementsAnswered,
+		&i.MorningCheckin,
+		&i.NightCheckin,
+		&i.MutedUntil,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered FROM users WHERE phone = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -49,12 +52,15 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.WakeTime,
 		&i.Bedtime,
 		&i.SupplementsAnswered,
+		&i.MorningCheckin,
+		&i.NightCheckin,
+		&i.MutedUntil,
 	)
 	return i, err
 }
 
 const listUsersWithTimezone = `-- name: ListUsersWithTimezone :many
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered FROM users WHERE timezone IS NOT NULL ORDER BY id
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE timezone IS NOT NULL ORDER BY id
 `
 
 // Users whose local time is known, so scheduled texts can be timed for them.
@@ -77,6 +83,9 @@ func (q *Queries) ListUsersWithTimezone(ctx context.Context) ([]User, error) {
 			&i.WakeTime,
 			&i.Bedtime,
 			&i.SupplementsAnswered,
+			&i.MorningCheckin,
+			&i.NightCheckin,
+			&i.MutedUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -104,16 +113,22 @@ UPDATE users
 SET name = $1,
     timezone = $2,
     wake_time = $3,
-    bedtime = $4
-WHERE id = $5
+    bedtime = $4,
+    morning_checkin = $5,
+    night_checkin = $6,
+    muted_until = $7
+WHERE id = $8
 `
 
 type RestoreProfileParams struct {
-	Name     pgtype.Text `json:"name"`
-	Timezone pgtype.Text `json:"timezone"`
-	WakeTime pgtype.Time `json:"wake_time"`
-	Bedtime  pgtype.Time `json:"bedtime"`
-	ID       int64       `json:"id"`
+	Name           pgtype.Text        `json:"name"`
+	Timezone       pgtype.Text        `json:"timezone"`
+	WakeTime       pgtype.Time        `json:"wake_time"`
+	Bedtime        pgtype.Time        `json:"bedtime"`
+	MorningCheckin pgtype.Time        `json:"morning_checkin"`
+	NightCheckin   pgtype.Time        `json:"night_checkin"`
+	MutedUntil     pgtype.Timestamptz `json:"muted_until"`
+	ID             int64              `json:"id"`
 }
 
 // Sets the profile fields exactly, NULLs included, to undo a change.
@@ -123,6 +138,35 @@ func (q *Queries) RestoreProfile(ctx context.Context, arg RestoreProfileParams) 
 		arg.Timezone,
 		arg.WakeTime,
 		arg.Bedtime,
+		arg.MorningCheckin,
+		arg.NightCheckin,
+		arg.MutedUntil,
+		arg.ID,
+	)
+	return err
+}
+
+const setCheckins = `-- name: SetCheckins :exec
+UPDATE users
+SET morning_checkin = $1,
+    night_checkin = $2,
+    muted_until = $3
+WHERE id = $4
+`
+
+type SetCheckinsParams struct {
+	MorningCheckin pgtype.Time        `json:"morning_checkin"`
+	NightCheckin   pgtype.Time        `json:"night_checkin"`
+	MutedUntil     pgtype.Timestamptz `json:"muted_until"`
+	ID             int64              `json:"id"`
+}
+
+// Sets the check-in times and mute exactly; NULL is the default or unmuted.
+func (q *Queries) SetCheckins(ctx context.Context, arg SetCheckinsParams) error {
+	_, err := q.db.Exec(ctx, setCheckins,
+		arg.MorningCheckin,
+		arg.NightCheckin,
+		arg.MutedUntil,
 		arg.ID,
 	)
 	return err
@@ -136,7 +180,7 @@ SET name = COALESCE($2, name),
     bedtime = COALESCE($5, bedtime),
     monthly_budget_usd = COALESCE($6, monthly_budget_usd)
 WHERE id = $1
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until
 `
 
 type UpdateProfileParams struct {
@@ -169,6 +213,9 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 		&i.WakeTime,
 		&i.Bedtime,
 		&i.SupplementsAnswered,
+		&i.MorningCheckin,
+		&i.NightCheckin,
+		&i.MutedUntil,
 	)
 	return i, err
 }
@@ -176,7 +223,7 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (phone) VALUES ($1)
 ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until
 `
 
 func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
@@ -192,6 +239,9 @@ func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
 		&i.WakeTime,
 		&i.Bedtime,
 		&i.SupplementsAnswered,
+		&i.MorningCheckin,
+		&i.NightCheckin,
+		&i.MutedUntil,
 	)
 	return i, err
 }

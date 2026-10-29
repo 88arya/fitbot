@@ -79,6 +79,36 @@ func (q *Queries) MarkUndone(ctx context.Context, arg MarkUndoneParams) error {
 	return err
 }
 
+const messageAction = `-- name: MessageAction :one
+SELECT id, user_id, message_id, tool, args, occurrence, result, created_at, undo, undone_at, undone_by FROM actions WHERE message_id = $1 AND tool = $2 ORDER BY id LIMIT 1
+`
+
+type MessageActionParams struct {
+	MessageID int64  `json:"message_id"`
+	Tool      string `json:"tool"`
+}
+
+// The first call of tool the text message_id applied, if any. Rejected
+// calls are rolled back, so only applied ones are found.
+func (q *Queries) MessageAction(ctx context.Context, arg MessageActionParams) (Action, error) {
+	row := q.db.QueryRow(ctx, messageAction, arg.MessageID, arg.Tool)
+	var i Action
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.MessageID,
+		&i.Tool,
+		&i.Args,
+		&i.Occurrence,
+		&i.Result,
+		&i.CreatedAt,
+		&i.Undo,
+		&i.UndoneAt,
+		&i.UndoneBy,
+	)
+	return i, err
+}
+
 const nextUndo = `-- name: NextUndo :one
 SELECT id, user_id, message_id, tool, args, occurrence, result, created_at, undo, undone_at, undone_by FROM actions
 WHERE user_id = $1 AND undo IS NOT NULL AND undone_at IS NULL

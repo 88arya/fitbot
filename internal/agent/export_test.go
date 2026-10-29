@@ -74,3 +74,38 @@ func FormatAmount(metric string, v int) string {
 	m, _ := metricByName(metric)
 	return m.format(v)
 }
+
+// DueTexts lists the scheduled texts due on day, like "gym_followup/18:00
+// at 20:00", for tests outside the package.
+func (a *Agent) DueTexts(ctx context.Context, userID int64, day time.Time) ([]string, error) {
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	d := pgtype.Date{Time: time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
+	due, err := a.Checkins().Due(ctx, user, d)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, x := range due {
+		k := x.Kind
+		if x.Slot != "" {
+			k += "/" + x.Slot
+		}
+		out = append(out, k+" at "+clock(x.At, "15:04"))
+	}
+	return out, nil
+}
+
+// CheckinText is the scheduled text of kind and slot on day as it would go
+// out now, for tests outside the package.
+func (a *Agent) CheckinText(ctx context.Context, userID int64, day time.Time, kind, slot string) (string, error) {
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	d := pgtype.Date{Time: time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC), Valid: true}
+	text, err := a.Checkins().Text(ctx, user, d, kind, slot)
+	return text.Body, err
+}

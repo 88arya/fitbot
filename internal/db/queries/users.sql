@@ -30,7 +30,18 @@ UPDATE users
 SET name = sqlc.narg(name),
     timezone = sqlc.narg(timezone),
     wake_time = sqlc.narg(wake_time),
-    bedtime = sqlc.narg(bedtime)
+    bedtime = sqlc.narg(bedtime),
+    morning_checkin = sqlc.narg(morning_checkin),
+    night_checkin = sqlc.narg(night_checkin),
+    muted_until = sqlc.narg(muted_until)
+WHERE id = @id;
+
+-- name: SetCheckins :exec
+-- Sets the check-in times and mute exactly; NULL is the default or unmuted.
+UPDATE users
+SET morning_checkin = sqlc.narg(morning_checkin),
+    night_checkin = sqlc.narg(night_checkin),
+    muted_until = sqlc.narg(muted_until)
 WHERE id = @id;
 
 -- name: LockUser :one

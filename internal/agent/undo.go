@@ -93,8 +93,11 @@ type profileState struct {
 	Name     *string `json:"name"`
 	Timezone *string `json:"timezone"`
 	// Microseconds since midnight.
-	WakeTime *int64 `json:"wake_time"`
-	Bedtime  *int64 `json:"bedtime"`
+	WakeTime       *int64     `json:"wake_time"`
+	Bedtime        *int64     `json:"bedtime"`
+	MorningCheckin *int64     `json:"morning_checkin"`
+	NightCheckin   *int64     `json:"night_checkin"`
+	MutedUntil     *time.Time `json:"muted_until"`
 }
 
 func profileOf(u store.User) *profileState {
@@ -110,6 +113,10 @@ func profileOf(u store.User) *profileState {
 	}
 	if u.Bedtime.Valid {
 		p.Bedtime = &u.Bedtime.Microseconds
+	}
+	p.MorningCheckin, p.NightCheckin = microsOf(u.MorningCheckin), microsOf(u.NightCheckin)
+	if u.MutedUntil.Valid {
+		p.MutedUntil = &u.MutedUntil.Time
 	}
 	return p
 }
@@ -225,8 +232,13 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		if p == nil {
 			return errors.New("no profile to restore")
 		}
+		muted := pgtype.Timestamptz{}
+		if p.MutedUntil != nil {
+			muted = pgtype.Timestamptz{Time: *p.MutedUntil, Valid: true}
+		}
 		return q.RestoreProfile(ctx, store.RestoreProfileParams{ID: userID, Name: text(p.Name), Timezone: text(p.Timezone),
-			WakeTime: timeOf(p.WakeTime), Bedtime: timeOf(p.Bedtime)})
+			WakeTime: timeOf(p.WakeTime), Bedtime: timeOf(p.Bedtime), MorningCheckin: timeOf(p.MorningCheckin),
+			NightCheckin: timeOf(p.NightCheckin), MutedUntil: muted})
 	case undoDeleteMemory:
 		_, err := q.DeleteMemory(ctx, store.DeleteMemoryParams{ID: rec.ID, UserID: userID})
 		return err

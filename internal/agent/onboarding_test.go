@@ -89,7 +89,9 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	before := len(s.Sends())
 	s.Set(time.Date(2026, 10, 21, 6, 15, 0, 0, loc))
 	s.Tick()
-	if sends := s.WaitSends(before + 1); sends[before] != "Good morning, Sam. How did you sleep?" {
+	want := "Good morning, Sam. Goals: 2,000 cal, 150 g protein, 2.5 L water. Supplements: creatine 5 g at night (10:30 PM). " +
+		"How did you sleep?"
+	if sends := s.WaitSends(before + 1); sends[before] != want {
 		t.Errorf("check-in = %q", sends[before])
 	}
 	s.Set(time.Date(2026, 10, 21, 8, 0, 0, 0, loc))
@@ -98,8 +100,12 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	if n := len(s.Sends()); n != before+1 {
 		t.Errorf("sends after 8:00 tick = %d, want %d", n, before+1)
 	}
-	if got := s.Rows(`SELECT local_date::text, to_char(scheduled_at AT TIME ZONE 'America/Toronto', 'HH24:MI'), status
-		FROM deliveries ORDER BY local_date`); fmt.Sprint(got) != "[2026-10-21 | 06:15 | sent 2026-10-22 | 06:15 | pending]" {
-		t.Errorf("deliveries = %v, want Oct 21 sent and Oct 22 planned, both at 6:15", got)
+	// The rest of the day's texts are planned from the new times: a water
+	// nudge halfway to the night check-in, 30 minutes before bedtime.
+	want = "[2026-10-21 | 06:15 | morning_checkin | sent 2026-10-21 | 14:07 | water_nudge | pending " +
+		"2026-10-21 | 22:00 | night_checkin | pending]"
+	if got := s.Rows(`SELECT local_date::text, to_char(scheduled_at AT TIME ZONE 'America/Toronto', 'HH24:MI'), kind, status
+		FROM deliveries ORDER BY scheduled_at`); fmt.Sprint(got) != want {
+		t.Errorf("deliveries = %v\nwant %s", got, want)
 	}
 }

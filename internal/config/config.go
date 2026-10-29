@@ -27,6 +27,13 @@ type Config struct {
 	// GoalBand is how far from the goal, in percent, a day's calories,
 	// carbs, or fat can be and still count as on goal.
 	GoalBand int
+	// GymFollowup is how long after the gym reminder the follow-up goes.
+	GymFollowup time.Duration
+	// SupplementReping is how long after a supplement reminder it goes
+	// again; zero means it doesn't.
+	SupplementReping time.Duration
+	// WaterNudges is the most water nudges a day; zero turns them off.
+	WaterNudges int
 
 	Telnyx TelnyxConfig
 	OpenAI OpenAIConfig
@@ -101,6 +108,24 @@ func FromEnv(get func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf("GOAL_BAND: %q is not a percent from 1 to 50", env("GOAL_BAND", "")))
 	}
 	c.GoalBand = band
+
+	followup, err := time.ParseDuration(env("GYM_FOLLOWUP_DELAY", "2h"))
+	if err != nil || followup < 15*time.Minute || followup > 6*time.Hour {
+		errs = append(errs, fmt.Errorf("GYM_FOLLOWUP_DELAY: %q is not a duration from 15m to 6h", env("GYM_FOLLOWUP_DELAY", "")))
+	}
+	c.GymFollowup = followup
+
+	reping, err := time.ParseDuration(env("SUPPLEMENT_REPING", "0"))
+	if err != nil || reping != 0 && (reping < 15*time.Minute || reping > 6*time.Hour) {
+		errs = append(errs, fmt.Errorf("SUPPLEMENT_REPING: %q is not 0 or a duration from 15m to 6h", env("SUPPLEMENT_REPING", "")))
+	}
+	c.SupplementReping = reping
+
+	nudges, err := strconv.Atoi(env("WATER_NUDGES", "1"))
+	if err != nil || nudges < 0 || nudges > 4 {
+		errs = append(errs, fmt.Errorf("WATER_NUDGES: %q is not a number from 0 to 4", env("WATER_NUDGES", "")))
+	}
+	c.WaterNudges = nudges
 
 	for _, s := range strings.Split(env("ALLOWED_SENDERS", ""), ",") {
 		if s = strings.TrimSpace(s); s == "" {

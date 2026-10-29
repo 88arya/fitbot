@@ -169,3 +169,82 @@ func TestVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckinClock(t *testing.T) {
+	at := func(s string) pgtype.Time {
+		v, ok := timeOfDay(s)
+		if !ok {
+			t.Fatalf("bad time %q", s)
+		}
+		return v
+	}
+	for _, c := range []struct {
+		name           string
+		u              store.User
+		morning, night string
+		quiet, awake   []string
+	}{
+		{"defaults", store.User{}, "08:00", "21:30", []string{"22:00", "23:59", "00:00", "07:59"}, []string{"08:00", "21:59"}},
+		{"set times", store.User{WakeTime: at("06:15"), Bedtime: at("22:30"), MorningCheckin: at("07:00"), NightCheckin: at("20:00")},
+			"07:00", "20:00", []string{"22:30", "06:14"}, []string{"06:15", "22:29"}},
+		// A bedtime after midnight keeps the night check-in on its day.
+		{"late bedtime", store.User{WakeTime: at("09:00"), Bedtime: at("01:00")}, "09:00", "23:30",
+			[]string{"01:00", "08:59"}, []string{"00:59", "09:00", "23:30"}},
+		{"bedtime at 00:15", store.User{WakeTime: at("07:00"), Bedtime: at("00:15")}, "07:00", "23:30", []string{"00:15"}, []string{"00:14"}},
+		{"bedtime just before midnight", store.User{WakeTime: at("07:00"), Bedtime: at("23:50")}, "07:00", "23:20", nil, nil},
+	} {
+		if got := clock(morningTime(c.u), "15:04"); got != c.morning {
+			t.Errorf("%s: morning = %s, want %s", c.name, got, c.morning)
+		}
+		if got := clock(nightTime(c.u), "15:04"); got != c.night {
+			t.Errorf("%s: night = %s, want %s", c.name, got, c.night)
+		}
+		for _, s := range c.quiet {
+			if !quiet(c.u, micros(at(s))) {
+				t.Errorf("%s: %s should be quiet", c.name, s)
+			}
+		}
+		for _, s := range c.awake {
+			if quiet(c.u, micros(at(s))) {
+				t.Errorf("%s: %s should not be quiet", c.name, s)
+			}
+		}
+	}
+}
+
+func TestSnoozeFor(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want time.Duration
+	}{
+		{"snooze", time.Hour}, {"Snooze!", time.Hour}, {"snooze 2h", 2 * time.Hour}, {"snooze 30 min", 30 * time.Minute},
+		{"snooze for 3 hours", 3 * time.Hour}, {"SNOOZE 45m.", 45 * time.Minute}, {"snooze 24 hrs", 24 * time.Hour},
+	} {
+		if d, ok := snoozeFor(c.in); !ok || d != c.want {
+			t.Errorf("snoozeFor(%q) = %s, %v; want %s", c.in, d, ok, c.want)
+		}
+	}
+	for _, in := range []string{"", "snooze 25h", "snooze 0m", "snooze me", "snooze until 5", "please snooze", "snooze 2 days"} {
+		if _, ok := snoozeFor(in); ok {
+			t.Errorf("snoozeFor(%q) matched", in)
+		}
+	}
+}
+
+func TestReplyWord(t *testing.T) {
+	for _, in := range []string{"yes", "Yes!", " done. ", "took it", "Yep", "I went"} {
+		if yes, ok := replyWord(in); !ok || !yes {
+			t.Errorf("replyWord(%q) = %v, %v; want yes", in, yes, ok)
+		}
+	}
+	for _, in := range []string{"no", "Nope.", "skip", "didn't", "not today"} {
+		if yes, ok := replyWord(in); !ok || yes {
+			t.Errorf("replyWord(%q) = %v, %v; want no", in, yes, ok)
+		}
+	}
+	for _, in := range []string{"", "yes and no", "done with legs", "no, going tomorrow", "maybe"} {
+		if _, ok := replyWord(in); ok {
+			t.Errorf("replyWord(%q) matched", in)
+		}
+	}
+}

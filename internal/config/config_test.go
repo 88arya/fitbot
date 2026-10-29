@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func lookup(m map[string]string) func(string) string {
@@ -26,6 +27,9 @@ func TestFromEnvDefaults(t *testing.T) {
 	if c.GoalBand != 10 {
 		t.Errorf("GoalBand = %d", c.GoalBand)
 	}
+	if c.GymFollowup != 2*time.Hour || c.SupplementReping != 0 || c.WaterNudges != 1 {
+		t.Errorf("GymFollowup = %s, SupplementReping = %s, WaterNudges = %d", c.GymFollowup, c.SupplementReping, c.WaterNudges)
+	}
 	if c.Telnyx.APIKey != "" || c.OpenAI.APIKey != "" {
 		t.Errorf("providers should default to disabled")
 	}
@@ -43,6 +47,10 @@ func TestFromEnvErrors(t *testing.T) {
 		{"zero calorie floor", map[string]string{"DATABASE_URL": "x", "CALORIE_FLOOR": "0"}, "CALORIE_FLOOR"},
 		{"bad goal band", map[string]string{"DATABASE_URL": "x", "GOAL_BAND": "10%"}, "GOAL_BAND"},
 		{"wide goal band", map[string]string{"DATABASE_URL": "x", "GOAL_BAND": "51"}, "GOAL_BAND"},
+		{"bad follow-up delay", map[string]string{"DATABASE_URL": "x", "GYM_FOLLOWUP_DELAY": "2"}, "GYM_FOLLOWUP_DELAY"},
+		{"short follow-up delay", map[string]string{"DATABASE_URL": "x", "GYM_FOLLOWUP_DELAY": "10m"}, "GYM_FOLLOWUP_DELAY"},
+		{"long re-ping", map[string]string{"DATABASE_URL": "x", "SUPPLEMENT_REPING": "7h"}, "SUPPLEMENT_REPING"},
+		{"too many nudges", map[string]string{"DATABASE_URL": "x", "WATER_NUDGES": "5"}, "WATER_NUDGES"},
 		{"bad sender", map[string]string{"DATABASE_URL": "x", "ALLOWED_SENDERS": "4165551234"}, "not E.164"},
 		{"telnyx missing public key", map[string]string{"DATABASE_URL": "x", "TELNYX_API_KEY": "k"}, "TELNYX_PUBLIC_KEY is required"},
 		{"openai missing model", map[string]string{"DATABASE_URL": "x", "OPENAI_API_KEY": "k"}, "OPENAI_MODEL is required"},
@@ -68,5 +76,20 @@ func TestFromEnvSenders(t *testing.T) {
 	}
 	if len(c.AllowedSenders) != 2 || c.AllowedSenders[1] != "+16475550000" {
 		t.Errorf("AllowedSenders = %v", c.AllowedSenders)
+	}
+}
+
+func TestFromEnvCheckins(t *testing.T) {
+	c, err := FromEnv(lookup(map[string]string{
+		"DATABASE_URL":       "x",
+		"GYM_FOLLOWUP_DELAY": "90m",
+		"SUPPLEMENT_REPING":  "1h",
+		"WATER_NUDGES":       "0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GymFollowup != 90*time.Minute || c.SupplementReping != time.Hour || c.WaterNudges != 0 {
+		t.Errorf("GymFollowup = %s, SupplementReping = %s, WaterNudges = %d", c.GymFollowup, c.SupplementReping, c.WaterNudges)
 	}
 }

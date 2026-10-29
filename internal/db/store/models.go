@@ -35,6 +35,8 @@ type Delivery struct {
 	Error       pgtype.Text        `json:"error"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Slot        string             `json:"slot"`
+	Asks        []byte             `json:"asks"`
 }
 
 type Goal struct {
@@ -180,6 +182,9 @@ type User struct {
 	WakeTime            pgtype.Time        `json:"wake_time"`
 	Bedtime             pgtype.Time        `json:"bedtime"`
 	SupplementsAnswered bool               `json:"supplements_answered"`
+	MorningCheckin      pgtype.Time        `json:"morning_checkin"`
+	NightCheckin        pgtype.Time        `json:"night_checkin"`
+	MutedUntil          pgtype.Timestamptz `json:"muted_until"`
 }
 
 type WeightLog struct {

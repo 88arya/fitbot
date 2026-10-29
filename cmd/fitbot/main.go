@@ -71,11 +71,14 @@ func run() error {
 		// The agent runs without an LLM too, so fast-path texts like "undo"
 		// still work.
 		sms.Agent = &agent.Agent{
-			Pool:            pool,
-			Store:           sms.Store,
-			DefaultTimezone: cfg.DefaultTimezone.String(),
-			CalorieFloor:    cfg.CalorieFloor,
-			GoalBand:        cfg.GoalBand,
+			Pool:             pool,
+			Store:            sms.Store,
+			DefaultTimezone:  cfg.DefaultTimezone.String(),
+			CalorieFloor:     cfg.CalorieFloor,
+			GoalBand:         cfg.GoalBand,
+			GymFollowup:      cfg.GymFollowup,
+			SupplementReping: cfg.SupplementReping,
+			WaterNudges:      cfg.WaterNudges,
 		}
 	}
 	if cfg.OpenAI.APIKey == "" {
@@ -104,7 +107,7 @@ func run() error {
 			Pool:       pool,
 			Sender:     sms.Telnyx,
 			Recipients: cfg.AllowedSenders,
-			Checkins:   []scheduler.Checkin{scheduler.MorningCheckin},
+			Checkins:   sms.Agent.Checkins(),
 		}
 		go func() {
 			defer close(sched)

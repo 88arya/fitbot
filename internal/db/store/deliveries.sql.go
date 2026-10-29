@@ -21,7 +21,7 @@ WHERE id IN (
     LIMIT $2
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, user_id, kind, local_date, scheduled_at, run_at, status, attempts, message_id, error, created_at, updated_at
+RETURNING id, user_id, kind, local_date, scheduled_at, run_at, status, attempts, message_id, error, created_at, updated_at, slot, asks
 `
 
 type ClaimDueDeliveriesParams struct {
@@ -53,6 +53,8 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveries
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Slot,
+			&i.Asks,
 		); err != nil {
 			return nil, err
 		}
@@ -62,6 +64,45 @@ func (q *Queries) ClaimDueDeliveries(ctx context.Context, arg ClaimDueDeliveries
 		return nil, err
 	}
 	return items, nil
+}
+
+const deliveryBefore = `-- name: DeliveryBefore :one
+SELECT d.id, d.user_id, d.kind, d.local_date, d.scheduled_at, d.run_at, d.status, d.attempts, d.message_id, d.error, d.created_at, d.updated_at, d.slot, d.asks FROM deliveries d
+WHERE d.user_id = $1 AND d.message_id = (
+    SELECT m.id FROM messages m
+    WHERE m.user_id = $1 AND m.direction = 'outbound' AND m.id < $2
+    ORDER BY m.id DESC
+    LIMIT 1
+)
+`
+
+type DeliveryBeforeParams struct {
+	UserID   int64 `json:"user_id"`
+	BeforeID int64 `json:"before_id"`
+}
+
+// The scheduled text that is the user's newest outbound message before
+// message before_id, if that message is one.
+func (q *Queries) DeliveryBefore(ctx context.Context, arg DeliveryBeforeParams) (Delivery, error) {
+	row := q.db.QueryRow(ctx, deliveryBefore, arg.UserID, arg.BeforeID)
+	var i Delivery
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Kind,
+		&i.LocalDate,
+		&i.ScheduledAt,
+		&i.RunAt,
+		&i.Status,
+		&i.Attempts,
+		&i.MessageID,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Slot,
+		&i.Asks,
+	)
+	return i, err
 }
 
 const finishDelivery = `-- name: FinishDelivery :exec
@@ -87,12 +128,13 @@ func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) 
 }
 
 const linkDeliveryMessage = `-- name: LinkDeliveryMessage :execrows
-UPDATE deliveries SET message_id = $1, updated_at = $2
-WHERE id = $3 AND status = 'sending' AND attempts = $4
+UPDATE deliveries SET message_id = $1, asks = $2, updated_at = $3
+WHERE id = $4 AND status = 'sending' AND attempts = $5
 `
 
 type LinkDeliveryMessageParams struct {
 	MessageID pgtype.Int8        `json:"message_id"`
+	Asks      []byte             `json:"asks"`
 	Now       pgtype.Timestamptz `json:"now"`
 	ID        int64              `json:"id"`
 	Attempts  int32              `json:"attempts"`
@@ -103,6 +145,7 @@ type LinkDeliveryMessageParams struct {
 func (q *Queries) LinkDeliveryMessage(ctx context.Context, arg LinkDeliveryMessageParams) (int64, error) {
 	result, err := q.db.Exec(ctx, linkDeliveryMessage,
 		arg.MessageID,
+		arg.Asks,
 		arg.Now,
 		arg.ID,
 		arg.Attempts,
@@ -114,9 +157,9 @@ func (q *Queries) LinkDeliveryMessage(ctx context.Context, arg LinkDeliveryMessa
 }
 
 const planDelivery = `-- name: PlanDelivery :exec
-INSERT INTO deliveries (user_id, kind, local_date, scheduled_at, run_at, updated_at)
-VALUES ($1, $2, $3, $4, $4, $5)
-ON CONFLICT (user_id, kind, local_date) DO UPDATE
+INSERT INTO deliveries (user_id, kind, local_date, slot, scheduled_at, run_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $5, $6)
+ON CONFLICT (user_id, kind, local_date, slot) DO UPDATE
 SET scheduled_at = EXCLUDED.scheduled_at, run_at = EXCLUDED.run_at, updated_at = EXCLUDED.updated_at
 WHERE deliveries.status = 'pending'
   AND deliveries.attempts = 0
@@ -127,17 +170,19 @@ type PlanDeliveryParams struct {
 	UserID      int64              `json:"user_id"`
 	Kind        string             `json:"kind"`
 	LocalDate   pgtype.Date        `json:"local_date"`
+	Slot        string             `json:"slot"`
 	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 	Now         pgtype.Timestamptz `json:"now"`
 }
 
-// Adds the delivery for a user's local day. A pending one that has not been
-// tried yet moves to the new time, like after a timezone change.
+// Adds the delivery for a user's local day and slot. A pending one that has
+// not been tried yet moves to the new time, like after a timezone change.
 func (q *Queries) PlanDelivery(ctx context.Context, arg PlanDeliveryParams) error {
 	_, err := q.db.Exec(ctx, planDelivery,
 		arg.UserID,
 		arg.Kind,
 		arg.LocalDate,
+		arg.Slot,
 		arg.ScheduledAt,
 		arg.Now,
 	)
@@ -153,7 +198,7 @@ SET status = CASE
     END,
     updated_at = $1
 WHERE d.status = 'sending' AND d.updated_at < $2
-RETURNING id, user_id, kind, local_date, scheduled_at, run_at, status, attempts, message_id, error, created_at, updated_at
+RETURNING id, user_id, kind, local_date, scheduled_at, run_at, status, attempts, message_id, error, created_at, updated_at, slot, asks
 `
 
 type ReconcileStaleDeliveriesParams struct {
@@ -187,6 +232,8 @@ func (q *Queries) ReconcileStaleDeliveries(ctx context.Context, arg ReconcileSta
 			&i.Error,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Slot,
+			&i.Asks,
 		); err != nil {
 			return nil, err
 		}
