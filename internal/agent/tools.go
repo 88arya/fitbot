@@ -195,6 +195,41 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name: "get_day",
+			Description: "Look up one day: totals against goals (and what's left, for today), everything logged with ids, the " +
+				"training plan and workouts, supplements taken or due, and the weight.",
+			Parameters: object(map[string]any{
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day, YYYY-MM-DD, like yesterday's date. null for today."},
+			}),
+		},
+		run: handle((*Agent).getDay),
+	},
+	{
+		spec: llm.Tool{
+			Name: "get_stats",
+			Description: "Work out how the user did on one metric over a period: average, total, days on goal, current and best " +
+				"streak, and the period before to compare. Workouts give planned sessions done, skipped, and missed, and extras, " +
+				"by session; supplements give due doses taken; weight gives the 7-day average, its change over the period, and " +
+				"the distance to the target.",
+			Parameters: object(map[string]any{
+				"metric": map[string]any{"type": "string", "enum": statsMetrics},
+				"name": map[string]any{"type": []string{"string", "null"},
+					"description": "workout: one session, like legs; supplement: one supplement, like creatine. null for all."},
+				"period": map[string]any{"type": "string", "enum": statsPeriods,
+					"description": "last_days: days days ending today; this_week and last_week run Monday to Sunday; this_month " +
+						"and last_month; dates: first to last."},
+				"days": map[string]any{"type": []string{"integer", "null"},
+					"description": "last_days only: how many days ending today, like 14 for the last 2 weeks."},
+				"first": map[string]any{"type": []string{"string", "null"}, "description": "dates only: the first day, YYYY-MM-DD."},
+				"last": map[string]any{"type": []string{"string", "null"},
+					"description": "dates only: the last day, YYYY-MM-DD, or null for today."},
+			}),
+		},
+		run: handle((*Agent).getStats),
+	},
+	{
+		spec: llm.Tool{
 			Name:        "edit_log",
 			Description: "Change a logged amount, night of sleep, workout, supplement log, or weigh-in. Pass null for the fields that are not changing.",
 			Parameters: object(map[string]any{

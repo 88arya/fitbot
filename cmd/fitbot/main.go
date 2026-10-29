@@ -75,6 +75,7 @@ func run() error {
 			Store:           sms.Store,
 			DefaultTimezone: cfg.DefaultTimezone.String(),
 			CalorieFloor:    cfg.CalorieFloor,
+			GoalBand:        cfg.GoalBand,
 		}
 	}
 	if cfg.OpenAI.APIKey == "" {

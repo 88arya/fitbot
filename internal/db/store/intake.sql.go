@@ -84,6 +84,53 @@ func (q *Queries) InsertIntake(ctx context.Context, arg InsertIntakeParams) (Int
 	return i, err
 }
 
+const intakeDaily = `-- name: IntakeDaily :many
+SELECT local_date, SUM(amount)::int AS total
+FROM intake_logs
+WHERE user_id = $1 AND metric = $2 AND local_date BETWEEN $3 AND $4 AND deleted_at IS NULL
+GROUP BY local_date
+ORDER BY local_date
+`
+
+type IntakeDailyParams struct {
+	UserID int64       `json:"user_id"`
+	Metric string      `json:"metric"`
+	First  pgtype.Date `json:"first"`
+	Last   pgtype.Date `json:"last"`
+}
+
+type IntakeDailyRow struct {
+	LocalDate pgtype.Date `json:"local_date"`
+	Total     int32       `json:"total"`
+}
+
+// Each local day's total of one metric from first to last, for the days
+// with anything logged, oldest first.
+func (q *Queries) IntakeDaily(ctx context.Context, arg IntakeDailyParams) ([]IntakeDailyRow, error) {
+	rows, err := q.db.Query(ctx, intakeDaily,
+		arg.UserID,
+		arg.Metric,
+		arg.First,
+		arg.Last,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IntakeDailyRow{}
+	for rows.Next() {
+		var i IntakeDailyRow
+		if err := rows.Scan(&i.LocalDate, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const intakeOn = `-- name: IntakeOn :many
 SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at FROM intake_logs
 WHERE user_id = $1 AND local_date = $2 AND deleted_at IS NULL

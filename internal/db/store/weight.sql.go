@@ -196,3 +196,35 @@ func (q *Queries) WeightBetween(ctx context.Context, arg WeightBetweenParams) ([
 	}
 	return items, nil
 }
+
+const weightThrough = `-- name: WeightThrough :one
+SELECT id, user_id, action_id, message_id, local_date, grams, logged_at, deleted_at, created_at, updated_at FROM weight_logs
+WHERE user_id = $1 AND local_date <= $2 AND deleted_at IS NULL
+ORDER BY local_date DESC, logged_at, id
+LIMIT 1
+`
+
+type WeightThroughParams struct {
+	UserID int64       `json:"user_id"`
+	Day    pgtype.Date `json:"day"`
+}
+
+// The weight of the latest day weighed on or before day: that day's first
+// weigh-in.
+func (q *Queries) WeightThrough(ctx context.Context, arg WeightThroughParams) (WeightLog, error) {
+	row := q.db.QueryRow(ctx, weightThrough, arg.UserID, arg.Day)
+	var i WeightLog
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ActionID,
+		&i.MessageID,
+		&i.LocalDate,
+		&i.Grams,
+		&i.LoggedAt,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

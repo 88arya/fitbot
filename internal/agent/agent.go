@@ -43,6 +43,9 @@ type Agent struct {
 	DefaultTimezone string
 	// CalorieFloor is the lowest daily calorie goal accepted; zero means 1,200.
 	CalorieFloor int
+	// GoalBand is how far from the goal, in percent, a day's calories,
+	// carbs, or fat can be and still count as on goal; zero means 10.
+	GoalBand int
 	// Now returns the current time; nil means time.Now. Tests set it.
 	Now func() time.Time
 }
@@ -324,6 +327,7 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 		metrics[0].format(a.calorieFloor()))
 
 	b.WriteString(logs)
+	b.WriteString(a.questionSection())
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {

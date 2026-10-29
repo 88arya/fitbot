@@ -677,26 +677,8 @@ func (l *supplementList) dayText(d, today pgtype.Date, logs []store.SupplementLo
 // "last 7 days: 12 of 14 due doses taken, 1 skipped, 1 still due today".
 // logs are the days' logs by date.
 func (l *supplementList) week(today pgtype.Date, logs map[string][]store.SupplementLog) string {
-	counts := map[string]int{}
-	total := 0
-	for i := range supplementWeek {
-		d := addDays(today, i+1-supplementWeek)
-		for _, o := range l.doses(d, today, logs[dateKey(d)]) {
-			counts[o.state]++
-			total++
-		}
-	}
-	s := fmt.Sprintf("last %d days: ", supplementWeek)
-	if total == 0 {
-		return s + "none due"
-	}
-	s += fmt.Sprintf("%d of %s taken", counts["taken"], plural(total, "due dose"))
-	for _, c := range []struct{ state, word string }{{"skipped", "skipped"}, {sessionMissed, "missed"}, {sessionOpen, "still due today"}} {
-		if n := counts[c.state]; n > 0 {
-			s += fmt.Sprintf(", %d %s", n, c.word)
-		}
-	}
-	return s
+	c := l.count(addDays(today, 1-supplementWeek), today, today, logs, "")
+	return fmt.Sprintf("last %d days: %s", supplementWeek, c)
 }
 
 // supplementUndoReply is the list after undoing a change to it.

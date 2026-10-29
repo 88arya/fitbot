@@ -36,3 +36,12 @@ SELECT metric, SUM(amount)::int AS total
 FROM intake_logs
 WHERE user_id = @user_id AND local_date = @day AND deleted_at IS NULL
 GROUP BY metric;
+
+-- name: IntakeDaily :many
+-- Each local day's total of one metric from first to last, for the days
+-- with anything logged, oldest first.
+SELECT local_date, SUM(amount)::int AS total
+FROM intake_logs
+WHERE user_id = @user_id AND metric = @metric AND local_date BETWEEN @first AND @last AND deleted_at IS NULL
+GROUP BY local_date
+ORDER BY local_date;

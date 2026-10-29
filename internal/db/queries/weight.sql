@@ -31,3 +31,11 @@ WHERE id = @id AND user_id = @user_id;
 SELECT * FROM weight_logs
 WHERE user_id = @user_id AND local_date BETWEEN @first AND @last AND deleted_at IS NULL
 ORDER BY local_date, logged_at, id;
+
+-- name: WeightThrough :one
+-- The weight of the latest day weighed on or before day: that day's first
+-- weigh-in.
+SELECT * FROM weight_logs
+WHERE user_id = @user_id AND local_date <= @day AND deleted_at IS NULL
+ORDER BY local_date DESC, logged_at, id
+LIMIT 1;

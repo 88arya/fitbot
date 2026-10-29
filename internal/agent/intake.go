@@ -440,11 +440,7 @@ func progress(m metric, total int, g store.Goal, set bool, when string) string {
 		return m.format(total) + " " + when
 	}
 	goal := int(g.Value.Int32)
-	got, of := m.format(total), m.format(goal)
-	if unit := of[strings.LastIndex(of, " "):]; strings.HasSuffix(got, unit) {
-		got = strings.TrimSuffix(got, unit)
-	}
-	s := got + " / " + of + " " + when
+	s := ratio(m, total, goal) + " " + when
 	switch {
 	case total < goal:
 		return s + ", " + m.format(goal-total) + " to go"
@@ -452,6 +448,16 @@ func progress(m metric, total int, g store.Goal, set bool, when string) string {
 		return s + ", goal hit"
 	}
 	return s + ", " + m.format(total-goal) + " over"
+}
+
+// ratio is a total over a goal, like "1,240 / 1,800 cal", with a unit they
+// share shown once.
+func ratio(m metric, total, goal int) string {
+	got, of := m.format(total), m.format(goal)
+	if unit := of[strings.LastIndex(of, " "):]; strings.HasSuffix(got, unit) {
+		got = strings.TrimSuffix(got, unit)
+	}
+	return got + " / " + of
 }
 
 // dayWord names day relative to today: "today", "yesterday", or "on Oct 3".

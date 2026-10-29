@@ -67,3 +67,10 @@ func (a *Agent) WeightNumbers(ctx context.Context, userID int64, end time.Time) 
 	}
 	return s, nil
 }
+
+// FormatAmount shows a canonical amount of metric as replies do, like
+// "1,800 cal" or "7 hours 30 min", for tests outside the package.
+func FormatAmount(metric string, v int) string {
+	m, _ := metricByName(metric)
+	return m.format(v)
+}

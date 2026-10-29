@@ -415,34 +415,8 @@ func weekStart(d pgtype.Date) pgtype.Date {
 // missed, 1 to go, plus 1 extra session". Sessions planned today or later
 // and not logged are to go. The range must cover the week.
 func (r *workoutRange) week(first, today pgtype.Date) string {
-	var planned, extra int
-	counts := map[string]int{}
-	for i := range 7 {
-		ps, extras := r.day(addDays(first, i)).outcomes(today)
-		planned += len(ps)
-		extra += len(extras)
-		for _, p := range ps {
-			counts[p.state]++
-		}
-	}
-	s := "week of " + shortDate(first) + ": "
-	if planned == 0 {
-		s += "nothing planned"
-		if extra > 0 {
-			s += fmt.Sprintf(", %s done", plural(extra, "extra session"))
-		}
-		return s
-	}
-	s += fmt.Sprintf("%d of %s done", counts[sessionDone], plural(planned, "planned session"))
-	for _, c := range []struct{ state, word string }{{sessionSkipped, "skipped"}, {sessionMissed, "missed"}, {sessionOpen, "to go"}} {
-		if n := counts[c.state]; n > 0 {
-			s += fmt.Sprintf(", %d %s", n, c.word)
-		}
-	}
-	if extra > 0 {
-		s += ", plus " + plural(extra, "extra session")
-	}
-	return s
+	c, _, _ := r.count(first, addDays(first, 6), today, "")
+	return "week of " + shortDate(first) + ": " + c.String()
 }
 
 // plural is n and noun, with an s unless n is 1.

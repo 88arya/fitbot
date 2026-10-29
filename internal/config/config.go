@@ -24,6 +24,9 @@ type Config struct {
 	AllowedSenders  []string
 	// CalorieFloor is the lowest daily calorie goal Fitbot accepts.
 	CalorieFloor int
+	// GoalBand is how far from the goal, in percent, a day's calories,
+	// carbs, or fat can be and still count as on goal.
+	GoalBand int
 
 	Telnyx TelnyxConfig
 	OpenAI OpenAIConfig
@@ -92,6 +95,12 @@ func FromEnv(get func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf("CALORIE_FLOOR: %q is not a calorie amount from 1 to 5000", env("CALORIE_FLOOR", "")))
 	}
 	c.CalorieFloor = floor
+
+	band, err := strconv.Atoi(env("GOAL_BAND", "10"))
+	if err != nil || band < 1 || band > 50 {
+		errs = append(errs, fmt.Errorf("GOAL_BAND: %q is not a percent from 1 to 50", env("GOAL_BAND", "")))
+	}
+	c.GoalBand = band
 
 	for _, s := range strings.Split(env("ALLOWED_SENDERS", ""), ",") {
 		if s = strings.TrimSpace(s); s == "" {
