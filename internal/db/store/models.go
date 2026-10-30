@@ -114,6 +114,13 @@ type SessionPlan struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Setting struct {
+	Key       string             `json:"key"`
+	Value     string             `json:"value"`
+	UpdatedBy pgtype.Int8        `json:"updated_by"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SleepLog struct {
 	ID        int64              `json:"id"`
 	UserID    int64              `json:"user_id"`

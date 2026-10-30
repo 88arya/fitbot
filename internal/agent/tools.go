@@ -316,6 +316,18 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name: "update_setting",
+			Description: "Change one setting that applies to everyone, including turning a scheduled text on or off. " +
+				"The prompt's Settings section lists them.",
+			Parameters: object(map[string]any{
+				"key":   map[string]any{"type": "string", "enum": settingKeys()},
+				"value": map[string]any{"type": "string", "description": "The new value, as the Settings section describes, or default to go back to the default."},
+			}),
+		},
+		run: handle((*Agent).updateSetting),
+	},
+	{
+		spec: llm.Tool{
 			Name:        "remember",
 			Description: "Save a new lasting fact about the user as a short sentence, like \"Trains legs on Mondays\".",
 			Parameters:  object(map[string]any{"fact": map[string]any{"type": "string"}}),
@@ -393,6 +405,9 @@ func (a *Agent) applyTool(ctx context.Context, userID, msgID int64, tc llm.ToolC
 	args, err := canonical(tc.Function.Arguments)
 	if err != nil {
 		return "error: arguments are not valid JSON", "error", nil
+	}
+	if err := a.refreshSettings(ctx); err != nil {
+		return "", "", err
 	}
 	key := t.spec.Name + "\x00" + string(args)
 	seen[key]++
@@ -606,6 +621,7 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 // check-in at 8:00 AM (the wake time), night check-in at 9:30 PM (30
 // minutes before bedtime)".
 func (a *Agent) checkinTimes(user store.User) string {
+	timed := a.timed(user)
 	morning, night := " (the wake time)", " (30 minutes before bedtime)"
 	switch {
 	case user.MorningCheckin.Valid:
@@ -616,13 +632,13 @@ func (a *Agent) checkinTimes(user store.User) string {
 	switch {
 	case user.NightCheckin.Valid:
 		night = ""
-	case nightTime(user) == lastNight:
+	case nightTime(timed) == lastNight:
 		night = " (the latest it goes, for a bedtime after midnight)"
 	case !user.Bedtime.Valid:
 		night = " (30 minutes before the default bedtime)"
 	}
-	s := "morning check-in at " + clock(morningTime(user), "3:04 PM") + morning +
-		", night check-in at " + clock(nightTime(user), "3:04 PM") + night
+	s := "morning check-in at " + clock(morningTime(timed), "3:04 PM") + morning +
+		", night check-in at " + clock(nightTime(timed), "3:04 PM") + night
 	if user.MutedUntil.Valid && user.MutedUntil.Time.After(a.now()) {
 		s += "; scheduled texts muted until " + user.MutedUntil.Time.In(a.location(user)).Format("Mon Jan 2, 3:04 PM")
 	}

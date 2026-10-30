@@ -499,11 +499,11 @@ func (q questions) wantSupplements(names []string, spanName string, first, last 
 	return strings.Join(lines, "\n")
 }
 
-// TestQuestions seeds a month of calories, protein, fat, water, sleep,
-// weigh-ins, workouts on a weekly schedule, and supplements, with gaps and
-// goals that change partway, then asks 30 questions and checks each answer
-// against hand-run SQL.
-func TestQuestions(t *testing.T) {
+// seedMonth seeds a month of calories, protein, fat, water, sleep,
+// weigh-ins, workouts on a weekly schedule, and supplements, Sep 28 to Oct
+// 29, with gaps and goals that change partway. It returns the supplement
+// ids by name.
+func seedMonth(t *testing.T) (*sim.Sim, map[string]int64) {
 	loc, _ := time.LoadLocation("America/Toronto")
 	start := time.Date(2026, 9, 28, 7, 0, 0, 0, loc)
 	s := sim.New(t, start)
@@ -618,7 +618,14 @@ func TestQuestions(t *testing.T) {
 			take("fish oil", "taken")
 		}
 	}
+	return s, ids
+}
 
+// TestQuestions asks 30 questions about the seeded month and checks each
+// answer against hand-run SQL.
+func TestQuestions(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Toronto")
+	s, ids := seedMonth(t)
 	s.Set(time.Date(2026, 10, 29, 15, 0, 0, 0, loc))
 	q := questions{t: t, s: s, today: time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)}
 	monday := q.day(-3)

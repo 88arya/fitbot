@@ -41,6 +41,7 @@ const (
 	undoDeleteWeight          = "delete_weight"
 	undoRestoreWeight         = "restore_weight"
 	undoUndeleteWeight        = "undelete_weight"
+	undoRestoreSetting        = "restore_setting"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -86,6 +87,10 @@ type undoRecord struct {
 	Schedule *scheduleState `json:"schedule,omitempty"`
 	Plans    []planState    `json:"plans,omitempty"`
 	Days     []string       `json:"days,omitempty"`
+	// Setting is the setting's key, and Value what its row held, or nil for
+	// no row.
+	Setting string  `json:"setting,omitempty"`
+	Value   *string `json:"value,omitempty"`
 }
 
 // profileState is the profile fields set_profile changes, as they were.
@@ -394,6 +399,12 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		return restorePlans(ctx, q, userID, rec.Plans)
 	case undoRestorePlans:
 		return restorePlans(ctx, q, userID, rec.Plans)
+	case undoRestoreSetting:
+		if rec.Value == nil {
+			return q.DeleteSetting(ctx, rec.Setting)
+		}
+		return q.SetSetting(ctx, store.SetSettingParams{Key: rec.Setting, Value: *rec.Value,
+			UpdatedBy: pgtype.Int8{Int64: userID, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: a.now(), Valid: true}})
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
 }
@@ -407,6 +418,17 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 		return "", fmt.Errorf("decoding undo for action %d: %w", act.ID, err)
 	}
 	reply := "Undid " + rec.Desc + "."
+	if rec.Op == undoRestoreSetting {
+		v, _, err := a.loadSettings(ctx, q)
+		if err != nil {
+			return "", err
+		}
+		def, ok := settingByKey(rec.Setting)
+		if !ok {
+			return reply, nil
+		}
+		return reply + " " + upperFirst(def.label) + ": " + settingText(def.key, v[def.key]) + ".", nil
+	}
 	if rec.Op == undoRestoreSchedule || rec.Op == undoRestorePlans {
 		status, err := a.trainingUndoReply(ctx, q, userID, rec)
 		if err != nil || status == "" {

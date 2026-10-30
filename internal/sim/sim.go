@@ -190,6 +190,13 @@ func (s *Sim) serveTelnyx(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Sim) serveOpenAI(w http.ResponseWriter, r *http.Request) {
+	// A model lookup, for update_setting.
+	if r.Method == http.MethodGet {
+		if strings.HasSuffix(r.URL.Path, "/models/"+NoSuchModel) {
+			http.NotFound(w, r)
+		}
+		return
+	}
 	var req struct{ Messages []llm.Message }
 	json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
@@ -223,6 +230,9 @@ func (s *Sim) Tick() {
 		s.t.Fatal(err)
 	}
 }
+
+// NoSuchModel is a model the fake LLM provider doesn't have.
+const NoSuchModel = "no-such-model"
 
 // Say is an LLM answer that replies with text.
 func Say(text string) string {

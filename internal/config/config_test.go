@@ -93,3 +93,14 @@ func TestFromEnvCheckins(t *testing.T) {
 		t.Errorf("GymFollowup = %s, SupplementReping = %s, WaterNudges = %d", c.GymFollowup, c.SupplementReping, c.WaterNudges)
 	}
 }
+
+func TestParsePrice(t *testing.T) {
+	if f, err := ParsePrice("0.15"); err != nil || f != 0.15 {
+		t.Errorf("ParsePrice(0.15) = %v, %v", f, err)
+	}
+	for _, v := range []string{"-1", "NaN", "Inf", "$1", ""} {
+		if _, err := ParsePrice(v); err == nil {
+			t.Errorf("ParsePrice(%q) accepted", v)
+		}
+	}
+}

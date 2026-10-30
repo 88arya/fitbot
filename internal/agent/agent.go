@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/88arya/fitbot/internal/db"
@@ -39,7 +40,9 @@ type Agent struct {
 	Store *store.Queries
 	// LLM may be nil, in which case only fast-path texts like "undo" get an
 	// answer.
-	LLM             *llm.Client
+	LLM *llm.Client
+	// DefaultTimezone through WaterNudges are defaults, as are LLM's model
+	// and prices: a setting changed by text overrides them.
 	DefaultTimezone string
 	// CalorieFloor is the lowest daily calorie goal accepted; zero means 1,200.
 	CalorieFloor int
@@ -54,6 +57,12 @@ type Agent struct {
 	SupplementReping time.Duration
 	// WaterNudges is the most water nudges a day; zero means none.
 	WaterNudges int
+	// LogLevel is the process's log level, which the log_level setting
+	// changes; nil leaves it alone. DefaultLogLevel is what it starts at.
+	LogLevel        *slog.LevelVar
+	DefaultLogLevel slog.Level
+	// current is the settings as of the last refresh.
+	current atomic.Pointer[settingValues]
 	// Now returns the current time; nil means time.Now. Tests set it.
 	Now func() time.Time
 }
@@ -72,6 +81,9 @@ func (a *Agent) now() time.Time {
 // with the next setup question. Fast-path texts like "undo" are answered in
 // code, without the LLM.
 func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (string, error) {
+	if err := a.refreshSettings(ctx); err != nil {
+		return "", err
+	}
 	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen})
 	if err != nil {
 		return "", fmt.Errorf("loading history: %w", err)
@@ -112,6 +124,9 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	seen := map[string]int{}
 	for range maxRounds {
 		// The prompt is rebuilt each round so it shows changes made by tools.
+		if err := a.refreshSettings(ctx); err != nil {
+			return "", err
+		}
 		state, err := a.setupState(ctx, userID)
 		if err != nil {
 			return "", err
@@ -144,7 +159,11 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements+weight)}
+		settings, err := a.settingsSection(ctx)
+		if err != nil {
+			return "", err
+		}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements+weight+settings)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -177,9 +196,25 @@ func (a *Agent) setupState(ctx context.Context, userID int64) (setupState, error
 	return setupState{user: user, goals: goalsByMetric(goals), hasSchedule: err == nil}, nil
 }
 
+// timed fills in the default wake time and bedtime for a user who hasn't
+// given them, for working out what happens when. Check the user's own
+// fields to tell whether they gave one.
+func (a *Agent) timed(user store.User) store.User {
+	v := a.settings()
+	for _, f := range []struct {
+		key string
+		dst *pgtype.Time
+	}{{settingWake, &user.WakeTime}, {settingBedtime, &user.Bedtime}} {
+		if !f.dst.Valid {
+			*f.dst, _ = timeOfDay(v[f.key])
+		}
+	}
+	return user
+}
+
 // location is the user's timezone, or the default until they give one.
 func (a *Agent) location(user store.User) *time.Location {
-	tz := a.DefaultTimezone
+	tz := a.settings()[settingTimezone]
 	if user.Timezone.Valid {
 		tz = user.Timezone.String
 	}
@@ -244,9 +279,11 @@ func clock(tod time.Duration, layout string) string {
 
 // complete makes one LLM call and records it.
 func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (llm.Message, error) {
-	model := a.LLM.Model()
+	v := a.settings()
+	client := a.LLM.With(v[settingModel], v.price(settingInputPrice), v.price(settingOutputPrice))
+	model := client.Model()
 	start := time.Now()
-	out, usage, err := a.LLM.Complete(ctx, msgs, toolSpecs)
+	out, usage, err := client.Complete(ctx, msgs, toolSpecs)
 	latency := time.Since(start)
 
 	call := store.InsertLLMCallParams{
@@ -256,7 +293,7 @@ func (a *Agent) complete(ctx context.Context, inID int64, msgs []llm.Message) (l
 		OutputTokens: int32(usage.OutputTokens),
 		LatencyMs:    int32(latency.Milliseconds()),
 	}
-	cost, priced := a.LLM.Cost(usage)
+	cost, priced := client.Cost(usage)
 	if priced {
 		call.CostUsd = db.Numeric(strconv.FormatFloat(cost, 'f', 8, 64))
 		llmCost.WithLabelValues(model).Add(cost)
@@ -304,15 +341,16 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 	if user.Timezone.Valid {
 		fmt.Fprintf(&b, "timezone: %s\n", user.Timezone.String)
 	} else {
-		fmt.Fprintf(&b, "timezone: missing (times below assume %s)\n", a.DefaultTimezone)
+		fmt.Fprintf(&b, "timezone: missing (times below assume %s)\n", a.settings()[settingTimezone])
 	}
+	timed := a.timed(user)
 	for _, t := range []struct {
 		name string
 		set  bool
 		at   time.Duration
 	}{
-		{"wake time", user.WakeTime.Valid, scheduler.WakeTime(user)},
-		{"bedtime", user.Bedtime.Valid, scheduler.Bedtime(user)},
+		{"wake time", user.WakeTime.Valid, scheduler.WakeTime(timed)},
+		{"bedtime", user.Bedtime.Valid, scheduler.Bedtime(timed)},
 	} {
 		if t.set {
 			fmt.Fprintf(&b, "%s: %s\n", t.name, clock(t.at, "3:04 PM"))
@@ -330,13 +368,14 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			"or doesn't want to track a goal, save it with value null, a schedule with kind null, or supplements with action none. If they don't know their wake time or bedtime, "+
 			"save the default: wake time %s, bedtime %s. Do not ask for missing fields yourself: the next setup question is added after your reply. "+
 			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\"\n",
-			strings.Join(labels, "; "), clock(scheduler.DefaultWake, "15:04"), clock(scheduler.DefaultBedtime, "15:04"))
+			strings.Join(labels, "; "), a.settings()[settingWake], a.settings()[settingBedtime])
 	}
 	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile. " +
 		"Scheduled texts: " + a.checkinTimes(user) + ".\n" +
 		"Fitbot texts on its own, worded by code: the morning check-in (today's session, goals, supplements, and how they slept), " +
 		"the night check-in (today's totals, workouts, and supplements), a gym reminder at the session's time and \"Did you make " +
-		"it to the gym?\" later if nothing is logged, supplement reminders at their times, and a water nudge when well behind. " +
+		"it to the gym?\" later if nothing is logged, supplement reminders at their times, a water nudge when well behind, and " +
+		"on Mondays, just before the morning check-in, a summary of last week (Monday to Sunday). " +
 		"Change a check-in time with set_profile morning_checkin or night_checkin, or default to follow the wake time or " +
 		"bedtime again. Mute every scheduled text until a time with mute_until, like \"no texts until tomorrow 9am\", or off " +
 		"to unmute; \"snooze 2h\" and \"unmute\" texts do this without you. Answer a reply to a scheduled text with the usual " +

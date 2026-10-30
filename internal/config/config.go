@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -55,6 +56,72 @@ type OpenAIConfig struct {
 	OutputPrice float64
 }
 
+// The Parse functions check a setting's value, from env or from a text.
+
+// ParseTimezone reads an IANA timezone.
+func ParseTimezone(v string) (*time.Location, error) {
+	loc, err := time.LoadLocation(v)
+	if err != nil || v == "" || v == "Local" {
+		return nil, fmt.Errorf("%q is not an IANA timezone like America/Toronto", v)
+	}
+	return loc, nil
+}
+
+// ParseCalorieFloor reads the lowest daily calorie goal accepted.
+func ParseCalorieFloor(v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 5000 {
+		return 0, fmt.Errorf("%q is not a calorie amount from 1 to 5000", v)
+	}
+	return n, nil
+}
+
+// ParseGoalBand reads the on-goal band, in percent.
+func ParseGoalBand(v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 50 {
+		return 0, fmt.Errorf("%q is not a percent from 1 to 50", v)
+	}
+	return n, nil
+}
+
+// ParseGymFollowup reads how long after the gym reminder the follow-up goes.
+func ParseGymFollowup(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 15*time.Minute || d > 6*time.Hour {
+		return 0, fmt.Errorf("%q is not a duration from 15m to 6h", v)
+	}
+	return d, nil
+}
+
+// ParseSupplementReping reads how long after a supplement reminder it goes
+// again; zero means it doesn't.
+func ParseSupplementReping(v string) (time.Duration, error) {
+	d, err := time.ParseDuration(v)
+	if err != nil || d != 0 && (d < 15*time.Minute || d > 6*time.Hour) {
+		return 0, fmt.Errorf("%q is not 0 or a duration from 15m to 6h", v)
+	}
+	return d, nil
+}
+
+// ParseWaterNudges reads the most water nudges a day.
+func ParseWaterNudges(v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 || n > 4 {
+		return 0, fmt.Errorf("%q is not a number from 0 to 4", v)
+	}
+	return n, nil
+}
+
+// ParsePrice reads a price in USD per 1M tokens.
+func ParsePrice(v string) (float64, error) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("%q is not a price in USD per 1M tokens", v)
+	}
+	return f, nil
+}
+
 var e164 = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
 
 func Load() (*Config, error) {
@@ -91,39 +158,39 @@ func FromEnv(get func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf("LOG_LEVEL: %w", err))
 	}
 
-	tz, err := time.LoadLocation(env("DEFAULT_TIMEZONE", "America/Toronto"))
+	tz, err := ParseTimezone(env("DEFAULT_TIMEZONE", "America/Toronto"))
 	if err != nil {
 		errs = append(errs, fmt.Errorf("DEFAULT_TIMEZONE: %w", err))
 	}
 	c.DefaultTimezone = tz
 
-	floor, err := strconv.Atoi(env("CALORIE_FLOOR", "1200"))
-	if err != nil || floor < 1 || floor > 5000 {
-		errs = append(errs, fmt.Errorf("CALORIE_FLOOR: %q is not a calorie amount from 1 to 5000", env("CALORIE_FLOOR", "")))
+	floor, err := ParseCalorieFloor(env("CALORIE_FLOOR", "1200"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("CALORIE_FLOOR: %w", err))
 	}
 	c.CalorieFloor = floor
 
-	band, err := strconv.Atoi(env("GOAL_BAND", "10"))
-	if err != nil || band < 1 || band > 50 {
-		errs = append(errs, fmt.Errorf("GOAL_BAND: %q is not a percent from 1 to 50", env("GOAL_BAND", "")))
+	band, err := ParseGoalBand(env("GOAL_BAND", "10"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("GOAL_BAND: %w", err))
 	}
 	c.GoalBand = band
 
-	followup, err := time.ParseDuration(env("GYM_FOLLOWUP_DELAY", "2h"))
-	if err != nil || followup < 15*time.Minute || followup > 6*time.Hour {
-		errs = append(errs, fmt.Errorf("GYM_FOLLOWUP_DELAY: %q is not a duration from 15m to 6h", env("GYM_FOLLOWUP_DELAY", "")))
+	followup, err := ParseGymFollowup(env("GYM_FOLLOWUP_DELAY", "2h"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("GYM_FOLLOWUP_DELAY: %w", err))
 	}
 	c.GymFollowup = followup
 
-	reping, err := time.ParseDuration(env("SUPPLEMENT_REPING", "0"))
-	if err != nil || reping != 0 && (reping < 15*time.Minute || reping > 6*time.Hour) {
-		errs = append(errs, fmt.Errorf("SUPPLEMENT_REPING: %q is not 0 or a duration from 15m to 6h", env("SUPPLEMENT_REPING", "")))
+	reping, err := ParseSupplementReping(env("SUPPLEMENT_REPING", "0"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("SUPPLEMENT_REPING: %w", err))
 	}
 	c.SupplementReping = reping
 
-	nudges, err := strconv.Atoi(env("WATER_NUDGES", "1"))
-	if err != nil || nudges < 0 || nudges > 4 {
-		errs = append(errs, fmt.Errorf("WATER_NUDGES: %q is not a number from 0 to 4", env("WATER_NUDGES", "")))
+	nudges, err := ParseWaterNudges(env("WATER_NUDGES", "1"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("WATER_NUDGES: %w", err))
 	}
 	c.WaterNudges = nudges
 
@@ -160,9 +227,9 @@ func FromEnv(get func(string) string) (*Config, error) {
 			if v == "" {
 				continue
 			}
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f < 0 {
-				errs = append(errs, fmt.Errorf("%s: %q is not a price in USD per 1M tokens", key, v))
+			f, err := ParsePrice(v)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", key, err))
 			}
 			*dst = f
 		}

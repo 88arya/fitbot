@@ -147,10 +147,7 @@ func decimal(f float64, places int) string {
 }
 
 func (a *Agent) calorieFloor() int {
-	if a.CalorieFloor > 0 {
-		return a.CalorieFloor
-	}
-	return defaultCalorieFloor
+	return a.settings().int(settingFloor)
 }
 
 type goalArg struct {

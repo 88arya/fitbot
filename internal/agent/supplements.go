@@ -236,7 +236,7 @@ func (a *Agent) setSupplement(ctx context.Context, c *call, args supplementArgs)
 		return "", err
 	}
 	today := a.localDate(user)
-	l, err := loadSupplements(ctx, c.q, user)
+	l, err := loadSupplements(ctx, c.q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -364,7 +364,7 @@ func (a *Agent) logSupplement(ctx context.Context, c *call, args supplementLogAr
 			return "error: " + errText, nil
 		}
 	}
-	l, err := loadSupplements(ctx, c.q, user)
+	l, err := loadSupplements(ctx, c.q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -478,7 +478,7 @@ func (a *Agent) editSupplementLog(ctx context.Context, c *call, args editLogArgs
 			return "error: " + errText, nil
 		}
 	}
-	l, err := loadSupplements(ctx, c.q, user)
+	l, err := loadSupplements(ctx, c.q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -550,7 +550,7 @@ func (a *Agent) deleteSupplementLog(ctx context.Context, c *call, id *int64) (st
 	if err != nil {
 		return "", err
 	}
-	l, err := loadSupplements(ctx, c.q, user)
+	l, err := loadSupplements(ctx, c.q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -596,7 +596,7 @@ func (a *Agent) supplementStatus(ctx context.Context, q *store.Queries, user sto
 	if day.Time.Before(first.Time) {
 		first = day
 	}
-	l, err := loadSupplements(ctx, q, user)
+	l, err := loadSupplements(ctx, q, a.timed(user))
 	if err != nil {
 		return supplementStatus{}, err
 	}
@@ -687,7 +687,7 @@ func (a *Agent) supplementUndoReply(ctx context.Context, q *store.Queries, userI
 	if err != nil {
 		return "", err
 	}
-	l, err := loadSupplements(ctx, q, user)
+	l, err := loadSupplements(ctx, q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -705,7 +705,7 @@ func (a *Agent) supplementUndoReply(ctx context.Context, q *store.Queries, userI
 // with ids for edit_log and delete_log, and where today and the week stand.
 func (a *Agent) supplementSection(ctx context.Context, user store.User) (string, error) {
 	today := a.localDate(user)
-	l, err := loadSupplements(ctx, a.Store, user)
+	l, err := loadSupplements(ctx, a.Store, a.timed(user))
 	if err != nil {
 		return "", fmt.Errorf("loading supplements: %w", err)
 	}

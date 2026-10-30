@@ -7,6 +7,7 @@
 package scheduler
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -157,6 +158,15 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("claiming: %w", err)
 		}
+		// RETURNING has no order, and texts due at once go out in the order
+		// they were planned, like the weekly summary before the morning
+		// check-in.
+		slices.SortFunc(claimed, func(a, b store.Delivery) int {
+			if c := a.RunAt.Time.Compare(b.RunAt.Time); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.ID, b.ID)
+		})
 		for _, d := range claimed {
 			s.deliver(ctx, q, d)
 		}

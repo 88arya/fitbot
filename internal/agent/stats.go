@@ -29,10 +29,7 @@ var statsMetrics = append(slices.Clone(intakeMetrics), "sleep", "weight", "worko
 var statsPeriods = []string{"last_days", "this_week", "last_week", "this_month", "last_month", "dates"}
 
 func (a *Agent) goalBand() int {
-	if a.GoalBand > 0 {
-		return a.GoalBand
-	}
-	return defaultGoalBand
+	return a.settings().int(settingBand)
 }
 
 // onGoal reports whether a day's total meets its goal: at or above it for
@@ -723,7 +720,7 @@ func (l *supplementList) takenStreak(name string, first, today pgtype.Date, logs
 // supplementStats reports on each supplement's due doses in sp, or one
 // supplement's, against the span before it, and its current streak.
 func (a *Agent) supplementStats(ctx context.Context, q *store.Queries, user store.User, sp span, today pgtype.Date, name *string) (string, error) {
-	l, err := loadSupplements(ctx, q, user)
+	l, err := loadSupplements(ctx, q, a.timed(user))
 	if err != nil {
 		return "", err
 	}
@@ -855,7 +852,7 @@ func (a *Agent) getDay(ctx context.Context, c *call, args dayArgs) (string, erro
 		return "", err
 	}
 	if len(supLogs) > 0 {
-		l, err := loadSupplements(ctx, c.q, user)
+		l, err := loadSupplements(ctx, c.q, a.timed(user))
 		if err != nil {
 			return "", err
 		}

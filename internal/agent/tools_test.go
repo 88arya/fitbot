@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/88arya/fitbot/internal/db/store"
+	"github.com/88arya/fitbot/internal/llm"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -246,5 +247,31 @@ func TestReplyWord(t *testing.T) {
 		if _, ok := replyWord(in); ok {
 			t.Errorf("replyWord(%q) matched", in)
 		}
+	}
+}
+
+func TestShortDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		0: "0", 2 * time.Hour: "2h", 90 * time.Minute: "1h30m", 45 * time.Minute: "45m", time.Hour + 30*time.Second: "1h0m30s",
+	} {
+		if got := shortDuration(d); got != want {
+			t.Errorf("shortDuration(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// TestSettingDefaults checks every setting has a default its own parser
+// accepts, so a reset can't store or show something invalid.
+func TestSettingDefaults(t *testing.T) {
+	a := &Agent{DefaultTimezone: "America/Toronto", LLM: llm.New("http://x", "k", "m", 0.5, 1)}
+	v := a.defaults()
+	for _, d := range settingDefs {
+		got, err := d.parse(v[d.key])
+		if err != nil || got != v[d.key] {
+			t.Errorf("%s default %q parses to %q, %v", d.key, v[d.key], got, err)
+		}
+	}
+	if len(v) != len(settingDefs) {
+		t.Errorf("%d defaults for %d settings", len(v), len(settingDefs))
 	}
 }

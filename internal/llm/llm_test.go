@@ -76,3 +76,29 @@ func TestCompleteToolCalls(t *testing.T) {
 		t.Errorf("tools sent = %v", sent["tools"])
 	}
 }
+
+func TestWith(t *testing.T) {
+	c := New("http://x", "k", "a", 1, 2).With("b", 3, 4)
+	in, out := c.Prices()
+	if c.Model() != "b" || in != 3 || out != 4 {
+		t.Errorf("With: %s %v %v", c.Model(), in, out)
+	}
+}
+
+func TestModelExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models/gone":
+			http.NotFound(w, r)
+		case "/models/broken":
+			http.Error(w, "down", http.StatusBadGateway)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k", "a", 0, 0)
+	for model, want := range map[string]bool{"here": true, "gone": false, "broken": true} {
+		if got := c.ModelExists(context.Background(), model); got != want {
+			t.Errorf("ModelExists(%s) = %v", model, got)
+		}
+	}
+}

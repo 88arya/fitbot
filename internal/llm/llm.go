@@ -10,6 +10,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -68,8 +69,12 @@ type Client struct {
 	Backoff time.Duration
 }
 
-// attempts is how many times a request is tried before giving up.
-const attempts = 3
+const (
+	// attempts is how many times a request is tried before giving up.
+	attempts = 3
+	// modelCheckTimeout caps ModelExists, which runs while saving a setting.
+	modelCheckTimeout = 10 * time.Second
+)
 
 func New(baseURL, apiKey, model string, inputPrice, outputPrice float64) *Client {
 	return &Client{
@@ -84,6 +89,34 @@ func New(baseURL, apiKey, model string, inputPrice, outputPrice float64) *Client
 }
 
 func (c *Client) Model() string { return c.model }
+
+// Prices returns the input and output prices in USD per 1M tokens.
+func (c *Client) Prices() (input, output float64) { return c.inputPrice, c.outputPrice }
+
+// With returns a copy of c that calls model at these prices.
+func (c *Client) With(model string, inputPrice, outputPrice float64) *Client {
+	out := *c
+	out.model, out.inputPrice, out.outputPrice = model, inputPrice, outputPrice
+	return &out
+}
+
+// ModelExists asks the provider about model. Only a 404 counts as no, since
+// a provider may not offer this lookup at all.
+func (c *Client) ModelExists(ctx context.Context, model string) bool {
+	ctx, cancel := context.WithTimeout(ctx, modelCheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models/"+url.PathEscape(model), nil)
+	if err != nil {
+		return true
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode != http.StatusNotFound
+}
 
 // Cost returns what a call with usage u cost in USD, or ok=false when the
 // model's prices are not configured.

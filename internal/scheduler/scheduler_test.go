@@ -593,6 +593,33 @@ func (x *texts) Text(_ context.Context, _ store.User, _ pgtype.Date, kind, slot 
 	return Text{Body: x.body[kind+"/"+slot], Asks: x.asks}, nil
 }
 
+// TestSameTime sends texts due at once in the order they were planned,
+// even when the database returns the claimed rows in another order.
+func TestSameTime(t *testing.T) {
+	const tz = "America/Toronto"
+	e := newEnv(t, local(tz, 2026, 11, 2, 6, 0))
+	_, phone := e.user(tz)
+	x := &texts{}
+	s := e.scheduler()
+	s.Checkins = x
+	x.set([]Due{{Kind: "first", At: 8 * time.Hour}, {Kind: "second", At: 8 * time.Hour}, {Kind: "third", At: 8 * time.Hour}},
+		map[string]string{"first/": "one", "second/": "two", "third/": "three"})
+	e.tickAt(s, local(tz, 2026, 11, 2, 6, 0))
+	// An update writes a new row version at the end of the table, so a scan
+	// finds the first text last.
+	if _, err := e.pool.Exec(e.ctx, `UPDATE deliveries SET updated_at = updated_at WHERE kind = 'first'`); err != nil {
+		t.Fatal(err)
+	}
+	e.tickAt(s, local(tz, 2026, 11, 2, 8, 0))
+	var got []string
+	for _, txt := range e.sender.to(phone) {
+		got = append(got, txt.body)
+	}
+	if want := "[one two three]"; fmt.Sprint(got) != want {
+		t.Errorf("sent %v, want %s", got, want)
+	}
+}
+
 // TestSlots sends several texts of one kind a day, each once, and skips
 // one whose slot is gone or moved, one with nothing to say, and every text
 // while the user is muted.

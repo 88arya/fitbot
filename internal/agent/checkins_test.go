@@ -91,7 +91,10 @@ func TestCheckinWeek(t *testing.T) {
 		{at(32, 10, 0), "send the night check-in at 9", []string{sim.Call("set_profile",
 			`{"name":null,"timezone":null,"wake_time":null,"bedtime":null,"morning_checkin":null,"night_checkin":"21:00","mute_until":null}`),
 			sim.Say("Done.")}, "Done."},
-		// Mon: the gym skipped ahead of time; fish oil answered with "done".
+		// Mon: creatine answered with "done" after the weekly summary, which
+		// goes out first; the gym skipped ahead of time; fish oil answered
+		// with "done".
+		{at(33, 8, 5), "done", nil, "Logged creatine taken."},
 		{at(33, 8, 30), "skipping the gym today", []string{sim.Call("plan_session", plan("skip", "null", "null")),
 			sim.Say("Skipped.")}, "Skipped."},
 		{at(33, 13, 5), "done", nil, "Logged fish oil taken."},
@@ -171,7 +174,8 @@ func TestCheckinWeek(t *testing.T) {
 		"Nov 01 22:00 supplement_reminder/22:00 sent",
 
 		"Nov 02 08:00 morning_checkin sent",
-		"Nov 02 09:00 supplement_reping/08:00 sent",
+		"Nov 02 08:00 weekly_summary sent",
+		"Nov 02 09:00 supplement_reping/08:00 skipped (no longer due)",
 		"Nov 02 13:00 supplement_reminder/13:00 sent",
 		"Nov 02 14:00 supplement_reping/13:00 skipped (no longer due)",
 		"Nov 02 14:30 water_nudge/1 sent",
@@ -234,7 +238,7 @@ func TestCheckinWeek(t *testing.T) {
 			"Supplements: creatine not logged yet, magnesium not logged yet, vitamin d not logged yet.",
 		"Nov 01 22:00 supplement_reminder": "Time for magnesium. Reply done once you've taken it, or skip.",
 		"Nov 02 21:00 night_checkin": "Good evening, Sam. " + intake("0 ml / 2.5 L today, 2.5 L to go") + " Workouts: push skipped. " +
-			"Supplements: creatine not logged yet, fish oil taken, magnesium not logged yet, vitamin d not logged yet.",
+			"Supplements: creatine taken, fish oil taken, magnesium not logged yet, vitamin d not logged yet.",
 		"Nov 03 21:00 night_checkin": "Good evening, Sam. " + intake("2 / 2.5 L today, 500 ml to go") +
 			" Workouts: nothing planned, pull moved to Wed Nov 4. Supplements: creatine taken, magnesium not logged yet, " +
 			"vitamin d not logged yet.",
@@ -242,6 +246,13 @@ func TestCheckinWeek(t *testing.T) {
 			" Supplements: creatine 5 g now, fish oil 1 g at 1:00 PM, magnesium at night (10:00 PM), vitamin d any time; " +
 			"reply done once you've taken creatine, or skip. How did you sleep?",
 		"Nov 04 18:00 gym_reminder": "Time to head out: legs + cardio + pull at 6:00 PM.",
+		// The user started on Wednesday, so the goals cover 5 days.
+		"Nov 02 08:00 weekly_summary": "Last week (Oct 26 to Nov 1):\nCalories: nothing logged.\nProtein: nothing logged.\n" +
+			"Water: 1 L average over 2 days logged, on goal 0 of 5 days.\n" +
+			"Sleep: 7 hours 30 min average over 1 night logged, on goal 0 of 5 nights.\n" +
+			"Workouts: 3 of 4 planned sessions done, 1 skipped (legs 1 of 1, cardio 1 of 1, push 0 of 1, pull 1 of 1).\n" +
+			"Supplements taken: creatine 3 of 5, 2 missed; fish oil 1 of 2, 1 missed; magnesium 0 of 5, 1 skipped, 4 missed; " +
+			"vitamin d 0 of 5, 5 missed.",
 	}
 	sent := map[string]string{}
 	for _, r := range s.Rows(`SELECT to_char(d.scheduled_at AT TIME ZONE 'America/Toronto', 'Mon DD HH24:MI') || ' ' || d.kind, m.body
@@ -254,6 +265,13 @@ func TestCheckinWeek(t *testing.T) {
 			t.Errorf("%s:\n got %q\nwant %q", k, sent[k], want)
 		}
 	}
+	// The summary goes out before Monday's check-in, so "done" answers the
+	// check-in.
+	got = s.Rows(`SELECT d.kind FROM deliveries d JOIN messages m ON m.id = d.message_id
+		WHERE d.local_date = '2026-11-02' AND d.kind IN ('weekly_summary', 'morning_checkin') ORDER BY m.id`)
+	if fmt.Sprint(got) != "[weekly_summary morning_checkin]" {
+		t.Errorf("Monday morning sent %v, want the summary first", got)
+	}
 
 	// Each short reply logged what its text asked about, on its day.
 	wantWorkouts := "[2026-10-28 | done | [legs cardio] 2026-10-30 | skipped | [push] 2026-10-31 | done | [pull] " +
@@ -262,7 +280,7 @@ func TestCheckinWeek(t *testing.T) {
 		t.Errorf("workouts = %v\nwant %s", got, wantWorkouts)
 	}
 	wantTakes := "[2026-10-28 | creatine | taken 2026-10-29 | creatine | taken 2026-10-29 | magnesium | skipped " +
-		"2026-10-30 | fish oil | taken 2026-10-31 | creatine | taken 2026-11-02 | fish oil | taken " +
+		"2026-10-30 | fish oil | taken 2026-10-31 | creatine | taken 2026-11-02 | creatine | taken 2026-11-02 | fish oil | taken " +
 		"2026-11-03 | creatine | taken 2026-11-03 | magnesium | taken]"
 	if got := s.Rows(`SELECT l.local_date::text, s.name, l.status FROM supplement_logs l JOIN supplements s ON s.id = l.supplement_id
 		WHERE l.deleted_at IS NULL ORDER BY l.local_date, s.name`); fmt.Sprint(got) != wantTakes {
@@ -327,13 +345,14 @@ func TestCheckinRules(t *testing.T) {
 		"set_supplement", supplementCall("set", `"vitamin d"`, "null", "null", "null")), sim.Say("Saved."))
 	s.Text("zinc and iron at 7, creatine at 8:20, melatonin at 11:30pm, vitamin d whenever")
 
-	// Monday: the follow-up at 9:00 PM is before the night check-in;
-	// creatine joins the morning check-in but is still re-pinged; iron and
-	// zinc at 7:00 share a reminder, and melatonin at 11:30 PM gets its own,
-	// quiet hours or not, but its re-ping would be past midnight.
-	want := "morning_checkin at 08:00, night_checkin at 21:30, gym_reminder/19:00 at 19:00, gym_followup/19:00 at 21:00, " +
-		"supplement_reminder/07:00 at 07:00, supplement_reping/07:00 at 08:00, supplement_reping/08:20 at 09:20, " +
-		"supplement_reminder/23:30 at 23:30, water_nudge/1 at 12:30, water_nudge/2 at 17:00"
+	// Monday: the weekly summary goes just before the morning check-in;
+	// the follow-up at 9:00 PM is before the night check-in; creatine joins
+	// the morning check-in but is still re-pinged; iron and zinc at 7:00
+	// share a reminder, and melatonin at 11:30 PM gets its own, quiet hours
+	// or not, but its re-ping would be past midnight.
+	want := "weekly_summary at 08:00, morning_checkin at 08:00, night_checkin at 21:30, gym_reminder/19:00 at 19:00, " +
+		"gym_followup/19:00 at 21:00, supplement_reminder/07:00 at 07:00, supplement_reping/07:00 at 08:00, " +
+		"supplement_reping/08:20 at 09:20, supplement_reminder/23:30 at 23:30, water_nudge/1 at 12:30, water_nudge/2 at 17:00"
 	if got := dueTexts(t, s, mon); got != want {
 		t.Errorf("Monday:\n got %s\nwant %s", got, want)
 	}
@@ -358,7 +377,8 @@ func TestCheckinRules(t *testing.T) {
 		t.Errorf("Monday with an early bedtime: %s", got)
 	}
 	// No water goal, no nudges; the user's own morning check-in time starts
-	// the day, and iron and zinc at 7:00 now join it.
+	// the day, with the weekly summary, and iron and zinc at 7:00 now join
+	// it.
 	if _, err := s.Pool.Exec(s.Ctx, `UPDATE goals SET value = NULL WHERE metric = 'water'`); err != nil {
 		t.Fatal(err)
 	}
@@ -366,9 +386,9 @@ func TestCheckinRules(t *testing.T) {
 		WHERE id = $1`, s.UserID); err != nil {
 		t.Fatal(err)
 	}
-	want = "morning_checkin at 07:00, night_checkin at 21:30, gym_reminder/19:00 at 19:00, gym_followup/19:00 at 21:00, " +
-		"supplement_reping/07:00 at 08:00, supplement_reminder/08:20 at 08:20, supplement_reping/08:20 at 09:20, " +
-		"supplement_reminder/23:30 at 23:30"
+	want = "weekly_summary at 07:00, morning_checkin at 07:00, night_checkin at 21:30, gym_reminder/19:00 at 19:00, " +
+		"gym_followup/19:00 at 21:00, supplement_reping/07:00 at 08:00, supplement_reminder/08:20 at 08:20, " +
+		"supplement_reping/08:20 at 09:20, supplement_reminder/23:30 at 23:30"
 	if got := dueTexts(t, s, mon); got != want {
 		t.Errorf("Monday, 7:00 check-in and no water goal:\n got %s\nwant %s", got, want)
 	}
@@ -510,6 +530,8 @@ func TestCheckinSettings(t *testing.T) {
 	if sys := reqs[len(reqs)-1][0].Content; !strings.Contains(sys, "Scheduled texts: morning check-in at 8:00 AM (the wake time), "+
 		"night check-in at 9:00 PM; scheduled texts muted until Tue Nov 3, 9:00 AM.\n") {
 		t.Errorf("prompt is missing the scheduled texts line:\n%s", sys)
+	} else if !strings.Contains(sys, "on Mondays, just before the morning check-in, a summary of last week") {
+		t.Errorf("prompt is missing the weekly summary:\n%s", sys)
 	}
 
 	got = results(

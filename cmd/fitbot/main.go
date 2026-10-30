@@ -38,7 +38,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
+	// A LevelVar, so the log_level setting can change it while running.
+	logLevel := &slog.LevelVar{}
+	logLevel.Set(cfg.LogLevel)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -79,6 +82,8 @@ func run() error {
 			GymFollowup:      cfg.GymFollowup,
 			SupplementReping: cfg.SupplementReping,
 			WaterNudges:      cfg.WaterNudges,
+			LogLevel:         logLevel,
+			DefaultLogLevel:  cfg.LogLevel,
 		}
 	}
 	if cfg.OpenAI.APIKey == "" {

@@ -53,6 +53,9 @@ const (
 	maxMute = 30 * 24 * time.Hour
 	// maxSnooze is the longest a "snooze" text can mute for.
 	maxSnooze = 24 * time.Hour
+	// defaultGymFollowup is the follow-up delay when Agent.GymFollowup is
+	// unset.
+	defaultGymFollowup = 2 * time.Hour
 	// muteLayout is how mute_until gives a local time.
 	muteLayout = "2006-01-02 15:04"
 )
@@ -132,6 +135,8 @@ type checkinDay struct {
 
 func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date) (*checkinDay, error) {
 	q := a.Store
+	user = a.timed(user)
+	settings := a.settings()
 	d := &checkinDay{user: user, day: day, morning: morningTime(user), night: nightTime(user), totals: map[string]int{}}
 	goals, err := q.GoalsOn(ctx, store.GoalsOnParams{UserID: user.ID, Day: day})
 	if err != nil {
@@ -173,9 +178,9 @@ func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date
 		if i < 0 {
 			g := doseGroup{at: at}
 			switch {
-			case near(at, d.morning):
+			case near(at, d.morning) && settings.on(settingMorning):
 				g.join = kindMorning
-			case near(at, d.night):
+			case near(at, d.night) && settings.on(settingNight):
 				g.join = kindNight
 			}
 			d.doses = append(d.doses, g)
@@ -257,55 +262,69 @@ func (d *checkinDay) waterTimes(n int) []time.Duration {
 type checkins struct{ a *Agent }
 
 // Checkins is what the scheduler sends for the agent: the morning and night
-// check-ins, gym reminders and follow-ups, supplement reminders, and water
-// nudges.
+// check-ins, gym reminders and follow-ups, supplement reminders, water
+// nudges, and the weekly summary.
 func (a *Agent) Checkins() scheduler.Checkins {
 	return checkins{a}
 }
 
-func (a *Agent) gymFollowup() time.Duration {
-	if a.GymFollowup > 0 {
-		return a.GymFollowup
-	}
-	return 2 * time.Hour
-}
-
 func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]scheduler.Due, error) {
+	if err := c.a.refreshSettings(ctx); err != nil {
+		return nil, err
+	}
 	d, err := c.a.checkinDay(ctx, u, day)
 	if err != nil {
 		return nil, err
 	}
-	out := []scheduler.Due{{Kind: kindMorning, At: d.morning}, {Kind: kindNight, At: d.night}}
+	u = d.user
+	v := c.a.settings()
+	var out []scheduler.Due
+	// The summary is listed first so it is planned, and sent, before the
+	// check-in, which a short reply then answers.
+	if weeklyDue(day) && v.on(settingWeekly) {
+		out = append(out, scheduler.Due{Kind: kindWeekly, At: d.morning})
+	}
+	if v.on(settingMorning) {
+		out = append(out, scheduler.Due{Kind: kindMorning, At: d.morning})
+	}
+	if v.on(settingNight) {
+		out = append(out, scheduler.Due{Kind: kindNight, At: d.night})
+	}
 	// later is a time derived from another, which must stay on the day and
 	// out of quiet hours.
 	later := func(t time.Duration) bool {
 		return t < 24*time.Hour && !quiet(u, t)
 	}
 	if at, ok := d.gymTime(); ok {
-		out = append(out, scheduler.Due{Kind: kindGym, Slot: slotName(at), At: at})
+		if v.on(settingGym) {
+			out = append(out, scheduler.Due{Kind: kindGym, Slot: slotName(at), At: at})
+		}
 		// A follow-up after the night check-in would ask what it already did.
-		if f := at + c.a.gymFollowup(); f < d.night && later(f) {
+		if f := at + v.duration(settingFollowup); v.on(settingFollowups) && (f < d.night || !v.on(settingNight)) && later(f) {
 			out = append(out, scheduler.Due{Kind: kindGymFollowup, Slot: slotName(at), At: f})
 		}
 	}
 	for _, g := range d.doses {
-		if len(d.pending(g)) == 0 {
+		if len(d.pending(g)) == 0 || !v.on(settingSupplements) {
 			continue
 		}
 		if g.join == "" {
 			out = append(out, scheduler.Due{Kind: kindSupplements, Slot: slotName(g.at), At: g.at})
 		}
-		if r := c.a.SupplementReping; r > 0 && later(g.at+r) {
+		if r := v.duration(settingReping); r > 0 && later(g.at+r) {
 			out = append(out, scheduler.Due{Kind: kindReping, Slot: slotName(g.at), At: g.at + r})
 		}
 	}
-	for i, at := range d.waterTimes(c.a.WaterNudges) {
+	for i, at := range d.waterTimes(v.int(settingWater)) {
 		out = append(out, scheduler.Due{Kind: kindWater, Slot: strconv.Itoa(i + 1), At: at})
 	}
 	return out, nil
 }
 
 func (c checkins) Text(ctx context.Context, u store.User, day pgtype.Date, kind, slot string) (scheduler.Text, error) {
+	if err := c.a.refreshSettings(ctx); err != nil {
+		return scheduler.Text{}, err
+	}
 	d, err := c.a.checkinDay(ctx, u, day)
 	if err != nil {
 		return scheduler.Text{}, err
@@ -343,6 +362,9 @@ func (c checkins) Text(ctx context.Context, u store.User, day pgtype.Date, kind,
 		return withAsks(lead+doseList(due)+". Reply done once you've taken "+itOrThem(len(due))+", or skip.", asksFor(due))
 	case kindWater:
 		return scheduler.Text{Body: c.a.waterText(d, slot)}, nil
+	case kindWeekly:
+		body, err := c.a.weeklyText(ctx, u, day)
+		return scheduler.Text{Body: body}, err
 	}
 	return scheduler.Text{}, fmt.Errorf("unknown kind %q", kind)
 }
@@ -532,7 +554,7 @@ func (a *Agent) nightText(ctx context.Context, d *checkinDay) (scheduler.Text, e
 // waterText nudges the user when they are well behind a straight-line pace
 // to their water goal at the nudge's time, or is empty when they aren't.
 func (a *Agent) waterText(d *checkinDay, slot string) string {
-	times := d.waterTimes(a.WaterNudges)
+	times := d.waterTimes(a.settings().int(settingWater))
 	i, err := strconv.Atoi(slot)
 	if err != nil || i < 1 || i > len(times) {
 		return ""
@@ -642,7 +664,7 @@ func (a *Agent) answerWorkout(ctx context.Context, user store.User, msgID int64,
 // answerSupplements logs the supplements a check-in asked about that
 // aren't logged yet, taken or skipped, through log_supplement.
 func (a *Agent) answerSupplements(ctx context.Context, user store.User, msgID int64, day pgtype.Date, names []string, yes bool) (string, error) {
-	l, err := loadSupplements(ctx, a.Store, user)
+	l, err := loadSupplements(ctx, a.Store, a.timed(user))
 	if err != nil {
 		return "", err
 	}
