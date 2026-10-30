@@ -16,6 +16,8 @@ services:
       retries: 10
 
   app:
+    # `docker compose pull` uses the published image; `make up` builds this one from source.
+    image: ghcr.io/88arya/fitbot:latest
     build: .
     env_file: .env
     environment:
