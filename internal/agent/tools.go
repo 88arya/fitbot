@@ -85,6 +85,17 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name: "set_state",
+			Description: "Set whether the user is bulking, maintaining, or cutting. A change starts today; earlier days keep the " +
+				"state they had. It decides how calories are judged: at or above the goal on a bulk, at or under it otherwise.",
+			Parameters: object(map[string]any{
+				"state": map[string]any{"type": "string", "enum": bodyStates},
+			}),
+		},
+		run: handle((*Agent).setState),
+	},
+	{
+		spec: llm.Tool{
 			Name: "set_goals",
 			Description: "Set or change the user's goals. List only the metrics that are changing. A change starts today; " +
 				"earlier days keep the goal they had. Only save amounts the user gave.",

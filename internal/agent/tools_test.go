@@ -122,13 +122,15 @@ func TestStatsSpan(t *testing.T) {
 
 func TestOnGoal(t *testing.T) {
 	for _, c := range []struct {
+		under       bool
 		total, goal int
 		want        bool
 	}{
-		{1800, 1800, true}, {1801, 1800, true}, {9000, 1800, true}, {1799, 1800, false}, {1, 1800, false},
+		{false, 1800, 1800, true}, {false, 1801, 1800, true}, {false, 9000, 1800, true}, {false, 1799, 1800, false}, {false, 1, 1800, false},
+		{true, 1800, 1800, true}, {true, 1799, 1800, true}, {true, 1, 1800, true}, {true, 1801, 1800, false}, {true, 9000, 1800, false},
 	} {
-		if got := onGoal(c.total, c.goal); got != c.want {
-			t.Errorf("onGoal(%d, %d) = %v", c.total, c.goal, got)
+		if got := onGoal(c.under, c.total, c.goal); got != c.want {
+			t.Errorf("onGoal(%v, %d, %d) = %v", c.under, c.total, c.goal, got)
 		}
 	}
 }
@@ -141,18 +143,23 @@ func TestVerdict(t *testing.T) {
 		m     metric
 		total int
 		g     store.Goal
+		under bool
 		want  string
 	}{
-		{calories, 1799, goal(1800), "1,799 / 1,800 cal yesterday, 1 cal short, goal missed"},
-		{calories, 1800, goal(1800), "1,800 / 1,800 cal yesterday, goal hit"},
-		{calories, 2300, goal(1800), "2,300 / 1,800 cal yesterday, goal hit"},
-		{calories, 1500, store.Goal{}, "1,500 cal yesterday"},
-		{calories, 0, goal(1800), "nothing logged yesterday (goal 1,800 cal)"},
-		{water, 0, store.Goal{}, "nothing logged yesterday"},
-		{water, 1500, goal(2000), "1.5 / 2 L yesterday, 500 ml short, goal missed"},
-		{water, 2600, goal(2000), "2.6 / 2 L yesterday, goal hit"},
+		{calories, 1799, goal(1800), false, "1,799 / 1,800 cal yesterday, 1 cal short, goal missed"},
+		{calories, 1800, goal(1800), false, "1,800 / 1,800 cal yesterday, goal hit"},
+		{calories, 2300, goal(1800), false, "2,300 / 1,800 cal yesterday, goal hit"},
+		{calories, 1799, goal(1800), true, "1,799 / 1,800 cal yesterday, goal hit"},
+		{calories, 1800, goal(1800), true, "1,800 / 1,800 cal yesterday, goal hit"},
+		{calories, 2300, goal(1800), true, "2,300 / 1,800 cal yesterday, 500 cal over, goal missed"},
+		{calories, 0, goal(1800), true, "nothing logged yesterday (goal 1,800 cal)"},
+		{calories, 1500, store.Goal{}, false, "1,500 cal yesterday"},
+		{calories, 0, goal(1800), false, "nothing logged yesterday (goal 1,800 cal)"},
+		{water, 0, store.Goal{}, false, "nothing logged yesterday"},
+		{water, 1500, goal(2000), false, "1.5 / 2 L yesterday, 500 ml short, goal missed"},
+		{water, 2600, goal(2000), false, "2.6 / 2 L yesterday, goal hit"},
 	} {
-		if got := verdict(c.m, c.total, c.g, "yesterday"); got != c.want {
+		if got := verdict(c.m, c.total, c.g, c.under, "yesterday"); got != c.want {
 			t.Errorf("verdict(%s, %d) = %q, want %q", c.m.name, c.total, got, c.want)
 		}
 	}
@@ -260,5 +267,50 @@ func TestSettingDefaults(t *testing.T) {
 	}
 	if len(v) != len(settingDefs) {
 		t.Errorf("%d defaults for %d settings", len(v), len(settingDefs))
+	}
+}
+
+func TestStateOn(t *testing.T) {
+	date := func(d int) pgtype.Date {
+		return pgtype.Date{Time: time.Date(2026, 10, d, 0, 0, 0, 0, time.UTC), Valid: true}
+	}
+	states := []store.BodyState{{State: stateBulk, StartDate: date(5)}, {State: stateCut, StartDate: date(10)}}
+	for _, c := range []struct {
+		d    int
+		want string
+	}{{1, stateBulk}, {5, stateBulk}, {9, stateBulk}, {10, stateCut}, {20, stateCut}} {
+		if got := stateOn(states, date(c.d)); got != c.want {
+			t.Errorf("Oct %d = %q, want %q", c.d, got, c.want)
+		}
+	}
+	if got := stateOn(nil, date(5)); got != "" {
+		t.Errorf("no states = %q", got)
+	}
+	for _, c := range []struct {
+		metric, state string
+		want          bool
+	}{
+		{"calories", stateCut, true}, {"calories", stateMaintain, true}, {"calories", "", true}, {"calories", stateBulk, false},
+		{"protein", stateCut, false}, {"carbs", stateCut, false}, {"fat", stateCut, false}, {"water", stateCut, false}, {"sleep", stateCut, false},
+	} {
+		if got := underGoal(c.metric, c.state); got != c.want {
+			t.Errorf("underGoal(%s, %q) = %v", c.metric, c.state, got)
+		}
+	}
+}
+
+func TestStateActual(t *testing.T) {
+	for _, c := range []struct {
+		change int
+		state  string
+		text   string
+	}{
+		{6, stateBulk, "gaining 0.6 lbs a week"}, {5, stateMaintain, "holding steady"}, {0, stateMaintain, "holding steady"},
+		{-5, stateMaintain, "holding steady"}, {-6, stateCut, "losing 0.6 lbs a week"},
+	} {
+		st, text := stateTrend{change: c.change, limit: 5}.actual()
+		if st != c.state || text != c.text {
+			t.Errorf("change %d = %s, %q", c.change, st, text)
+		}
 	}
 }

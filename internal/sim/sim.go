@@ -127,6 +127,10 @@ func New(t *testing.T, start time.Time) *Sim {
 		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO body_states (user_id, state, start_date) VALUES ($1, 'bulk', $2)`,
+		s.UserID, start.Format(time.DateOnly)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO training_schedules (user_id, start_date) VALUES ($1, $2)`,
 		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
@@ -162,14 +166,15 @@ func (s *Sim) Restart() {
 	}
 }
 
-// ResetSetup clears the simulated user's profile, goals, schedule, and
-// supplement answer.
+// ResetSetup clears the simulated user's profile, state, goals, schedule,
+// and supplement answer.
 // Called before the first Text, the user is new, so that text gets the
 // intro.
 func (s *Sim) ResetSetup() {
 	s.t.Helper()
 	for _, q := range []string{
 		`DELETE FROM goals WHERE user_id = $1`,
+		`DELETE FROM body_states WHERE user_id = $1`,
 		`DELETE FROM training_schedules WHERE user_id = $1`,
 		`UPDATE users SET name = NULL, timezone = NULL, wake_time = NULL, bedtime = NULL, supplements_answered = false WHERE id = $1`,
 	} {

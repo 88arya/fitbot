@@ -28,7 +28,8 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		{"toronto", "set_profile", `{"name":null,"timezone":"America/Toronto","wake_time":null,"bedtime":null}`,
 			"What time do you usually wake up and go to bed?"},
 		{"6:15, and bed around 10:30", "set_profile", `{"name":null,"timezone":null,"wake_time":"06:15","bedtime":"22:30"}`,
-			"What are your daily calorie and water goals?"},
+			"Are you looking to bulk, maintain, or cut right now?"},
+		{"cut", "set_state", `{"state":"cut"}`, "What are your daily calorie and water goals?"},
 		{"2000 cal and 2.5L water, 150g protein", "set_goals",
 			`{"goals":[{"metric":"calories","value":2000,"unit":"cal"},{"metric":"water","value":2.5,"unit":"l"},{"metric":"protein","value":150,"unit":"g"}]}`,
 			"How many hours of sleep"},
@@ -57,6 +58,9 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		}
 		if got := s.Rows(goals); fmt.Sprint(got) != wantGoals {
 			t.Errorf("%s: goals = %v\nwant %s", when, got, wantGoals)
+		}
+		if got := s.Rows(`SELECT state, start_date::text FROM body_states`); fmt.Sprint(got) != "[cut | 2026-10-20]" {
+			t.Errorf("%s: state = %v", when, got)
 		}
 		if got := s.Rows(`SELECT kind, start_date::text FROM training_schedules`); fmt.Sprint(got) != "[<nil> | 2026-10-20]" {
 			t.Errorf("%s: schedules = %v, want one with no kind", when, got)

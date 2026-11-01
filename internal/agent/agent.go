@@ -154,11 +154,15 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
+		body, err := a.stateSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
 		settings, err := a.settingsSection(ctx)
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements+weight+settings)}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements+weight+body+settings)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -188,7 +192,15 @@ func (a *Agent) setupState(ctx context.Context, userID int64) (setupState, error
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return setupState{}, fmt.Errorf("loading schedule: %w", err)
 	}
-	return setupState{user: user, goals: goalsByMetric(goals), hasSchedule: err == nil}, nil
+	s := setupState{user: user, goals: goalsByMetric(goals), hasSchedule: err == nil}
+	states, err := a.Store.BodyStateHistory(ctx, userID)
+	if err != nil {
+		return setupState{}, fmt.Errorf("loading state: %w", err)
+	}
+	if len(states) > 0 {
+		s.state = states[len(states)-1].State
+	}
+	return s, nil
 }
 
 // timed fills in the default wake time and bedtime for a user who hasn't
@@ -359,7 +371,8 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			labels = append(labels, f.label)
 		}
 		fmt.Fprintf(&b, "\nSetup is in progress. Still missing: %s. If the conversation gives any of these, save them "+
-			"with set_profile, set_goals, set_schedule, or set_supplement. Convert a city or region to its IANA timezone. If the user says \"none\" "+
+			"with set_profile, set_state, set_goals, set_schedule, or set_supplement. Convert a city or region to its IANA timezone. If the user isn't sure "+
+			"whether to bulk, maintain, or cut, save maintain. If the user says \"none\" "+
 			"or doesn't want to track a goal, save it with value null, a schedule with kind null, or supplements with action none. If they don't know their wake time or bedtime, "+
 			"save the default: wake time %s, bedtime %s. Do not ask for missing fields yourself: the next setup question is added after your reply. "+
 			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\"\n",

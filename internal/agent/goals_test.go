@@ -206,20 +206,30 @@ func TestProgress(t *testing.T) {
 		total  int
 		g      store.Goal
 		set    bool
+		under  bool
+		when   string
 		want   string
 	}{
-		{"calories", 1240, goal(1800), true, "1,240 / 1,800 cal today, 560 cal to go"},
-		{"calories", 1800, goal(1800), true, "1,800 / 1,800 cal today, goal hit"},
-		{"calories", 1950, goal(1800), true, "1,950 / 1,800 cal today, goal hit"},
-		{"protein", 170, goal(150), true, "170 / 150 g today, goal hit"},
-		{"fat", 80, goal(70), true, "80 / 70 g today, goal hit"},
-		{"water", 750, goal(2000), true, "750 ml / 2 L today, 1.25 L to go"},
-		{"water", 2500, goal(2000), true, "2.5 / 2 L today, goal hit"},
-		{"calories", 350, store.Goal{}, true, "350 cal today"},
-		{"calories", 350, store.Goal{}, false, "350 cal today"},
+		{"calories", 1240, goal(1800), true, false, "today", "1,240 / 1,800 cal today, 560 cal to go"},
+		{"calories", 1800, goal(1800), true, false, "today", "1,800 / 1,800 cal today, goal hit"},
+		{"calories", 1950, goal(1800), true, false, "today", "1,950 / 1,800 cal today, goal hit"},
+		{"protein", 170, goal(150), true, false, "today", "170 / 150 g today, goal hit"},
+		{"fat", 80, goal(70), true, false, "today", "80 / 70 g today, goal hit"},
+		{"water", 750, goal(2000), true, false, "today", "750 ml / 2 L today, 1.25 L to go"},
+		{"water", 2500, goal(2000), true, false, "today", "2.5 / 2 L today, goal hit"},
+		{"calories", 350, store.Goal{}, true, false, "today", "350 cal today"},
+		{"calories", 350, store.Goal{}, false, false, "today", "350 cal today"},
+		// A limit has room left today, and a past day under it is a hit.
+		{"calories", 0, goal(1800), true, true, "today", "0 / 1,800 cal today, 1,800 cal left"},
+		{"calories", 1240, goal(1800), true, true, "today", "1,240 / 1,800 cal today, 560 cal left"},
+		{"calories", 1800, goal(1800), true, true, "today", "1,800 / 1,800 cal today, goal hit"},
+		{"calories", 1950, goal(1800), true, true, "today", "1,950 / 1,800 cal today, 150 cal over, goal missed"},
+		{"calories", 1240, goal(1800), true, true, "yesterday", "1,240 / 1,800 cal yesterday, goal hit"},
+		{"calories", 1950, goal(1800), true, true, "yesterday", "1,950 / 1,800 cal yesterday, 150 cal over, goal missed"},
+		{"calories", 0, goal(1800), true, true, "yesterday", "0 / 1,800 cal yesterday"},
 	} {
 		m, _ := metricByName(c.metric)
-		if got := progress(m, c.total, c.g, c.set, "today"); got != c.want {
+		if got := progress(m, c.total, c.g, c.set, c.under, c.when); got != c.want {
 			t.Errorf("%s %d = %q, want %q", c.metric, c.total, got, c.want)
 		}
 	}

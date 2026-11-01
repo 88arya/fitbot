@@ -6,14 +6,17 @@ import (
 	"github.com/88arya/fitbot/internal/db/store"
 )
 
-// Setup collects the profile, goals, training schedule, and supplements one
-// step at a time. Code asks the questions so setup never depends on the
-// model remembering to; the model only reads the answers and saves them
-// with set_profile, set_goals, set_schedule, and set_supplement.
+// Setup collects the profile, state, goals, training schedule, and
+// supplements one step at a time. Code asks the questions so setup never
+// depends on the model remembering to; the model only reads the answers and
+// saves them with set_profile, set_state, set_goals, set_schedule, and
+// set_supplement.
 
 // setupState is what setup checks to find the next step.
 type setupState struct {
 	user store.User
+	// state is the user's latest state, or empty before they pick one.
+	state string
 	// goals holds each metric's latest goal, including ones the user chose
 	// not to track, so a "none" answer counts as answered.
 	goals map[string]store.Goal
@@ -57,6 +60,11 @@ var fields = []field{
 			return "What time do you usually wake up and go to bed?"
 		},
 		missing: func(s setupState) bool { return !s.user.WakeTime.Valid || !s.user.Bedtime.Valid },
+	},
+	{
+		label:    "bulk, maintain, or cut",
+		question: ask("Are you looking to bulk, maintain, or cut right now?"),
+		missing:  func(s setupState) bool { return s.state == "" },
 	},
 	{
 		label: "calorie and water goals (protein, carbs, and fat are optional)",

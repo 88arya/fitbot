@@ -42,6 +42,7 @@ const (
 	undoRestoreWeight         = "restore_weight"
 	undoUndeleteWeight        = "undelete_weight"
 	undoRestoreSetting        = "restore_setting"
+	undoRestoreState          = "restore_state"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -59,8 +60,8 @@ type undoRecord struct {
 	Fact    string        `json:"fact,omitempty"`
 	Profile *profileState `json:"profile,omitempty"`
 	// Day is the local day the action changed, as YYYY-MM-DD: the day of
-	// set_goals' or set_schedule's change, or the day a logged amount,
-	// night, workout, supplement log, or weigh-in was on before it.
+	// set_goals', set_state's, or set_schedule's change, or the day a logged
+	// amount, night, workout, supplement log, or weigh-in was on before it.
 	Day   string       `json:"day,omitempty"`
 	Goals []goalBefore `json:"goals,omitempty"`
 	// Amount is a logged amount's value, a night's minutes, or a
@@ -88,7 +89,7 @@ type undoRecord struct {
 	Plans    []planState    `json:"plans,omitempty"`
 	Days     []string       `json:"days,omitempty"`
 	// Setting is the setting's key, and Value what its row held, or nil for
-	// no row.
+	// no row. For a state, Value is what the row on Day held.
 	Setting string  `json:"setting,omitempty"`
 	Value   *string `json:"value,omitempty"`
 }
@@ -405,6 +406,15 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		}
 		return q.SetSetting(ctx, store.SetSettingParams{Key: rec.Setting, Value: *rec.Value,
 			UpdatedBy: pgtype.Int8{Int64: userID, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: a.now(), Valid: true}})
+	case undoRestoreState:
+		day, err := parseDay(rec.Day)
+		if err != nil {
+			return err
+		}
+		if rec.Value == nil {
+			return q.DeleteBodyState(ctx, store.DeleteBodyStateParams{UserID: userID, StartDate: day})
+		}
+		return q.SetBodyState(ctx, store.SetBodyStateParams{UserID: userID, State: *rec.Value, StartDate: day})
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
 }
@@ -428,6 +438,16 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 			return reply, nil
 		}
 		return reply + " " + upperFirst(def.label) + ": " + settingText(def.key, v[def.key]) + ".", nil
+	}
+	if rec.Op == undoRestoreState {
+		states, err := q.BodyStateHistory(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		if len(states) == 0 {
+			return reply, nil
+		}
+		return reply + " State: " + states[len(states)-1].State + ".", nil
 	}
 	if rec.Op == undoRestoreSchedule || rec.Op == undoRestorePlans {
 		status, err := a.trainingUndoReply(ctx, q, userID, rec)

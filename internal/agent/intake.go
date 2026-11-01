@@ -398,6 +398,11 @@ func (a *Agent) dayStatus(ctx context.Context, q *store.Queries, user store.User
 		return intakeDay{}, err
 	}
 	byMetric := goalsByMetric(goals)
+	states, err := q.BodyStateHistory(ctx, user.ID)
+	if err != nil {
+		return intakeDay{}, err
+	}
+	state := stateOn(states, day)
 	when := dayWord(day, a.localDate(user))
 	var out intakeDay
 	for _, name := range intakeMetrics {
@@ -406,7 +411,7 @@ func (a *Agent) dayStatus(ctx context.Context, q *store.Queries, user store.User
 		if m.name != "calories" && totals[m.name] == 0 && !g.Value.Valid {
 			continue
 		}
-		out.lines = append(out.lines, statusLine{m: m, text: progress(m, totals[m.name], g, set, when)})
+		out.lines = append(out.lines, statusLine{m: m, text: progress(m, totals[m.name], g, set, underGoal(m.name, state), when)})
 	}
 	return out, nil
 }
@@ -434,13 +439,25 @@ func (d intakeDay) forUser(metrics []string) string {
 }
 
 // progress is a total against a goal, like "1,240 / 1,800 cal today, 560
-// cal to go", or just the total when there is no goal.
-func progress(m metric, total int, g store.Goal, set bool, when string) string {
+// cal to go", or "560 cal left" when the goal is a limit, or just the total
+// when there is no goal.
+func progress(m metric, total int, g store.Goal, set, under bool, when string) string {
 	if !set || !g.Value.Valid {
 		return m.format(total) + " " + when
 	}
 	goal := int(g.Value.Int32)
 	s := ratio(m, total, goal) + " " + when
+	if under {
+		switch {
+		case total > goal:
+			return s + ", " + m.format(total-goal) + " over, goal missed"
+		case total < goal && when == "today":
+			return s + ", " + m.format(goal-total) + " left"
+		case total == 0:
+			return s
+		}
+		return s + ", goal hit"
+	}
 	if total < goal {
 		return s + ", " + m.format(goal-total) + " to go"
 	}

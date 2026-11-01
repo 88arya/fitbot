@@ -252,7 +252,7 @@ func TestCheckinWeek(t *testing.T) {
 			"Sleep: 7 hours 30 min average over 1 night logged, on goal 0 of 5 nights.\n" +
 			"Workouts: 3 of 4 planned sessions done, 1 skipped (legs 1 of 1, cardio 1 of 1, push 0 of 1, pull 1 of 1).\n" +
 			"Supplements taken: creatine 3 of 5, 2 missed; fish oil 1 of 2, 1 missed; magnesium 0 of 5, 1 skipped, 4 missed; " +
-			"vitamin d 0 of 5, 5 missed.",
+			"vitamin d 0 of 5, 5 missed.\nState: bulk, not enough weigh-ins.",
 	}
 	sent := map[string]string{}
 	for _, r := range s.Rows(`SELECT to_char(d.scheduled_at AT TIME ZONE 'America/Toronto', 'Mon DD HH24:MI') || ' ' || d.kind, m.body

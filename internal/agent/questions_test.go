@@ -306,6 +306,8 @@ func (q questions) wantWeight(name string, first, last time.Time, prevName strin
 	default:
 		parts = append(parts, fmt.Sprintf("%s: %s average over %d days weighed", prev, showLbs(p.avg), p.n))
 	}
+	state, _ := q.wantState("bulk", last)
+	parts = append(parts, state)
 	return "body weight, " + spanText(name, first, last) + ": " + strings.Join(parts, "; ") + "."
 }
 
@@ -916,7 +918,7 @@ func TestQuestionsRefused(t *testing.T) {
 	reqs := s.Requests()
 	sys := reqs[len(reqs)-1][0].Content
 	if !strings.Contains(sys, "\n## Questions\nAnswer questions about how the user is doing from get_day and get_stats") ||
-		!strings.Contains(sys, "On goal means at least the goal, for every metric") {
+		!strings.Contains(sys, "On goal means at least the goal, except calories on a cut or maintain") {
 		t.Errorf("prompt lacks the questions section:\n%s", sys)
 	}
 }

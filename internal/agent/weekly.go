@@ -25,11 +25,16 @@ func weeklyDue(day pgtype.Date) bool {
 // weeklyText is the week before day: each intake metric's average and days
 // on goal, sleep the same way, workouts done against planned by session,
 // each supplement's doses taken, and the 7-day average weight against the
-// week before. It is empty when there is nothing to report.
+// week before, then the state at the end of the week. It is empty when
+// there is nothing to report.
 func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date) (string, error) {
 	q := a.Store
 	monday := weekStart(day)
 	sp := span{addDays(monday, -7), addDays(monday, -1), "last week"}
+	states, err := q.BodyStateHistory(ctx, user.ID)
+	if err != nil {
+		return "", err
+	}
 	var lines []string
 	for _, name := range intakeMetrics {
 		m, _ := metricByName(name)
@@ -41,7 +46,7 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 		if err != nil {
 			return "", err
 		}
-		s := daily{m: m, values: map[string]int{}, goals: goals, noun: "day"}
+		s := daily{m: m, values: map[string]int{}, goals: goals, states: states, noun: "day"}
 		for _, r := range rows {
 			s.values[dateKey(r.LocalDate)] = int(r.Total)
 		}
@@ -90,6 +95,13 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 	}
 	if len(shown) == 0 {
 		return "", nil
+	}
+	st, err := a.loadStateTrend(ctx, q, user.ID, sp.last, day)
+	if err != nil {
+		return "", err
+	}
+	if st.state != "" {
+		shown = append(shown, st.forUser())
 	}
 	return "Last week (" + sp.dates() + "):\n" + strings.Join(shown, "\n"), nil
 }

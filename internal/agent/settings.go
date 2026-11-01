@@ -40,6 +40,7 @@ const (
 	settingFollowups   = "gym_followups"
 	settingSupplements = "supplement_reminders"
 	settingWeekly      = "weekly_summary"
+	settingStateChange = "state_weekly_change"
 )
 
 // resetValue is the value that puts a setting back to its default.
@@ -71,6 +72,7 @@ var settingDefs = []settingDef{
 	{settingFollowups, "gym follow-ups", "on or off", parseToggle},
 	{settingSupplements, "supplement reminders", "on or off; a re-ping needs these on", parseToggle},
 	{settingWeekly, "weekly summary", "on or off", parseToggle},
+	{settingStateChange, "state weekly change", "lbs a week beyond which a user counts as gaining or losing, 0.1 to 5", parseStateChange},
 }
 
 func settingByKey(key string) (settingDef, bool) {
@@ -167,6 +169,14 @@ func parseWaterNudges(v string) (string, error) {
 	return parseIntSetting(config.ParseWaterNudges)(v)
 }
 
+func parseStateChange(v string) (string, error) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || !(f >= 0.1 && f <= 5) {
+		return "", fmt.Errorf("%q is not 0.1 to 5 lbs a week", v)
+	}
+	return decimal(f, 1), nil
+}
+
 func parseToggle(v string) (string, error) {
 	switch strings.ToLower(v) {
 	case "on", "true", "yes":
@@ -234,6 +244,7 @@ func (a *Agent) defaults() settingValues {
 		settingFollowups:   "on",
 		settingSupplements: "on",
 		settingWeekly:      "on",
+		settingStateChange: "0.5",
 	}
 	if a.LLM != nil {
 		input, output := a.LLM.Prices()

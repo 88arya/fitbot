@@ -108,7 +108,8 @@ func (q questions) wantWeekly(monday time.Time, metrics []dailyQ) string {
 		}
 		lines = append(lines, line+".")
 	}
-	return strings.Join(lines, "\n")
+	_, state := q.wantState("bulk", last)
+	return strings.Join(append(lines, state), "\n")
 }
 
 // TestWeeklySummary checks the summary sent on each Monday of the seeded
@@ -162,7 +163,8 @@ func TestWeeklySummary(t *testing.T) {
 		"Workouts: 6 of 8 planned sessions done, 2 skipped, plus 1 extra session " +
 		"(push 2 of 2, pull 1 of 2, cardio 1 of 2 + 1 extra, legs 2 of 2).\n" +
 		"Supplements taken: creatine 6 of 7, 1 skipped; fish oil 1 of 3, 2 missed.\n" +
-		"Weight: 180.8 lbs 7-day average, down 1.2 lbs from the week before, 5.8 lbs above the 175 lbs target."
+		"Weight: 180.8 lbs 7-day average, down 1.2 lbs from the week before, 5.8 lbs above the 175 lbs target.\n" +
+		"State: bulk, actually losing 1.2 lbs a week. Maintenance is about 2,762 cal."
 	if err != nil || got != want {
 		t.Errorf("Oct 26 = %q, %v\nwant %q", got, err, want)
 	}

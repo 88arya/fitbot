@@ -22,6 +22,15 @@ type Action struct {
 	UndoneBy   pgtype.Int8        `json:"undone_by"`
 }
 
+type BodyState struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	State     string             `json:"state"`
+	StartDate pgtype.Date        `json:"start_date"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Delivery struct {
 	ID          int64              `json:"id"`
 	UserID      int64              `json:"user_id"`
