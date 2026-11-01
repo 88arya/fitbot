@@ -272,7 +272,7 @@ func TestSetup(t *testing.T) {
 		t.Errorf("prompt after setup still mentions it:\n%s", sys)
 	}
 	for _, want := range []string{"wake time: 6:30 AM", "bedtime: 11:00 PM", "calories: 2,200 cal a day", "protein: 160 g a day",
-		"carbs: not set", "water: 3 L a day", "sleep: not tracking", "target weight: not tracking", "below 1,200 cal a day",
+		"carbs: not set", "water: 3 L a day", "sleep: not tracking", "target weight: not tracking",
 		"Schedule: 2-day rotation: full body, rest (today is day 1 of 2)"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("prompt after setup lacks %q:\n%s", want, sys)

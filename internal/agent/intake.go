@@ -441,13 +441,10 @@ func progress(m metric, total int, g store.Goal, set bool, when string) string {
 	}
 	goal := int(g.Value.Int32)
 	s := ratio(m, total, goal) + " " + when
-	switch {
-	case total < goal:
+	if total < goal {
 		return s + ", " + m.format(goal-total) + " to go"
-	case total == goal || m.atLeast:
-		return s + ", goal hit"
 	}
-	return s + ", " + m.format(total-goal) + " over"
+	return s + ", goal hit"
 }
 
 // ratio is a total over a goal, like "1,240 / 1,800 cal", with a unit they

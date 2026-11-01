@@ -99,7 +99,7 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 // logged isn't on goal. It is empty for a metric with no goal that week and
 // nothing logged, and says nothing logged for one with a goal.
 func (a *Agent) weeklyLine(s daily, sp span) string {
-	t := a.tallyDays(s, sp)
+	t := tallyDays(s, sp)
 	goalDays := 0
 	for d := sp.first; !d.Time.After(sp.last.Time); d = addDays(d, 1) {
 		if goalOn(s.goals, d).Value.Valid {

@@ -21,12 +21,6 @@ func TestFromEnvDefaults(t *testing.T) {
 	if c.DefaultTimezone.String() != "America/Toronto" {
 		t.Errorf("DefaultTimezone = %q", c.DefaultTimezone)
 	}
-	if c.CalorieFloor != 1200 {
-		t.Errorf("CalorieFloor = %d", c.CalorieFloor)
-	}
-	if c.GoalBand != 10 {
-		t.Errorf("GoalBand = %d", c.GoalBand)
-	}
 	if c.GymFollowup != 2*time.Hour || c.SupplementReping != 0 || c.WaterNudges != 1 {
 		t.Errorf("GymFollowup = %s, SupplementReping = %s, WaterNudges = %d", c.GymFollowup, c.SupplementReping, c.WaterNudges)
 	}
@@ -43,10 +37,6 @@ func TestFromEnvErrors(t *testing.T) {
 	}{
 		{"missing database", map[string]string{}, "DATABASE_URL is required"},
 		{"bad timezone", map[string]string{"DATABASE_URL": "x", "DEFAULT_TIMEZONE": "Mars/Base"}, "DEFAULT_TIMEZONE"},
-		{"bad calorie floor", map[string]string{"DATABASE_URL": "x", "CALORIE_FLOOR": "lots"}, "CALORIE_FLOOR"},
-		{"zero calorie floor", map[string]string{"DATABASE_URL": "x", "CALORIE_FLOOR": "0"}, "CALORIE_FLOOR"},
-		{"bad goal band", map[string]string{"DATABASE_URL": "x", "GOAL_BAND": "10%"}, "GOAL_BAND"},
-		{"wide goal band", map[string]string{"DATABASE_URL": "x", "GOAL_BAND": "51"}, "GOAL_BAND"},
 		{"bad follow-up delay", map[string]string{"DATABASE_URL": "x", "GYM_FOLLOWUP_DELAY": "2"}, "GYM_FOLLOWUP_DELAY"},
 		{"short follow-up delay", map[string]string{"DATABASE_URL": "x", "GYM_FOLLOWUP_DELAY": "10m"}, "GYM_FOLLOWUP_DELAY"},
 		{"long re-ping", map[string]string{"DATABASE_URL": "x", "SUPPLEMENT_REPING": "7h"}, "SUPPLEMENT_REPING"},

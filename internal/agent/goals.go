@@ -15,10 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// defaultCalorieFloor is the lowest daily calorie goal Fitbot accepts when
-// Agent.CalorieFloor is unset.
-const defaultCalorieFloor = 1200
-
 // metric is something the user can set a goal for. Goals are stored in a
 // canonical unit and converted from whatever unit the user gave.
 type metric struct {
@@ -28,25 +24,20 @@ type metric struct {
 	// unit. The first listed in unitOrder is used when the model passes none.
 	units     map[string]float64
 	unitOrder []string
-	// min and max bound the canonical value. Calories use the calorie floor
-	// as their minimum instead.
+	// min and max bound the canonical value.
 	min, max int
 	// per is how often the goal applies, like "a day"; empty for a target.
 	per string
-	// atLeast is true when going past the goal still counts as meeting it,
-	// as with protein, rather than going over.
-	atLeast bool
 }
 
 var metrics = []metric{
-	{name: "calories", label: "calories", units: map[string]float64{"cal": 1}, unitOrder: []string{"cal"}, max: 10000, per: "a day"},
-	{name: "protein", label: "protein", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1000, per: "a day", atLeast: true},
+	{name: "calories", label: "calories", units: map[string]float64{"cal": 1}, unitOrder: []string{"cal"}, min: 1, max: 10000, per: "a day"},
+	{name: "protein", label: "protein", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1000, per: "a day"},
 	{name: "carbs", label: "carbs", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 1500, per: "a day"},
 	{name: "fat", label: "fat", units: map[string]float64{"g": 1}, unitOrder: []string{"g"}, min: 1, max: 500, per: "a day"},
 	{name: "water", label: "water", units: map[string]float64{"ml": 1, "l": 1000, "oz": 29.5735}, unitOrder: []string{"ml", "l", "oz"},
-		min: 250, max: 10000, per: "a day", atLeast: true},
-	{name: "sleep", label: "sleep", units: map[string]float64{"hours": 60}, unitOrder: []string{"hours"}, min: 3 * 60, max: 14 * 60, per: "a night",
-		atLeast: true},
+		min: 250, max: 10000, per: "a day"},
+	{name: "sleep", label: "sleep", units: map[string]float64{"hours": 60}, unitOrder: []string{"hours"}, min: 3 * 60, max: 14 * 60, per: "a night"},
 	// 50 to 1,000 lbs, in grams.
 	{name: "weight", label: "target weight", units: map[string]float64{"lbs": gramsPerPound, "kg": 1000}, unitOrder: []string{"lbs", "kg"},
 		min: 22680, max: 453592},
@@ -146,10 +137,6 @@ func decimal(f float64, places int) string {
 	return s
 }
 
-func (a *Agent) calorieFloor() int {
-	return a.settings().int(settingFloor)
-}
-
 type goalArg struct {
 	Metric string   `json:"metric"`
 	Value  *float64 `json:"value"`
@@ -183,7 +170,7 @@ func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, 
 			changes = append(changes, change{m: m})
 			continue
 		}
-		v, errText := a.canonicalGoal(m, *g.Value, g.Unit)
+		v, errText := canonicalGoal(m, *g.Value, g.Unit)
 		if errText != "" {
 			return "error: " + errText, nil
 		}
@@ -224,7 +211,7 @@ func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, 
 
 // canonicalGoal converts value in unit to m's canonical unit and checks it
 // is in range, or returns why not.
-func (a *Agent) canonicalGoal(m metric, value float64, unit *string) (int, string) {
+func canonicalGoal(m metric, value float64, unit *string) (int, string) {
 	u := m.unitOrder[0]
 	if unit != nil {
 		u = strings.ToLower(strings.TrimSpace(*unit))
@@ -237,20 +224,12 @@ func (a *Agent) canonicalGoal(m metric, value float64, unit *string) (int, strin
 		return 0, fmt.Sprintf("%s must be a positive amount, or null to stop tracking it", m.name)
 	}
 	v := value * size
-	lo, hi := m.min, m.max
-	if m.name == "calories" {
-		lo = a.calorieFloor()
-	}
-	if v > float64(hi) {
-		return 0, fmt.Sprintf("%s must be at most %s", m.label, m.format(hi))
+	if v > float64(m.max) {
+		return 0, fmt.Sprintf("%s must be at most %s", m.label, m.format(m.max))
 	}
 	n := int(math.Round(v))
-	if n < lo {
-		if m.name == "calories" {
-			return 0, fmt.Sprintf("%s is below the safe minimum of %s a day, so it was not saved. "+
-				"Tell the user Fitbot won't set a goal that low and suggest a doctor or dietitian for one", m.format(n), m.format(lo))
-		}
-		return 0, fmt.Sprintf("%s must be at least %s", m.label, m.format(lo))
+	if n < m.min {
+		return 0, fmt.Sprintf("%s must be at least %s", m.label, m.format(m.min))
 	}
 	return n, ""
 }

@@ -95,8 +95,8 @@ func TestSetGoalsValidation(t *testing.T) {
 	e := newEnv(t)
 	for _, c := range []struct{ args, want string }{
 		{`{"goals":[]}`, "error: no goals given"},
-		{`{"goals":[{"metric":"calories","value":1000,"unit":null}]}`, "error: 1,000 cal is below the safe minimum of 1,200 cal a day"},
-		{`{"goals":[{"metric":"calories","value":1199.6,"unit":null}]}`, ""},
+		{`{"goals":[{"metric":"calories","value":800,"unit":null}]}`, ""},
+		{`{"goals":[{"metric":"calories","value":0.4,"unit":null}]}`, "error: calories must be at least 1 cal"},
 		{`{"goals":[{"metric":"calories","value":20000,"unit":null}]}`, "error: calories must be at most 10,000 cal"},
 		{`{"goals":[{"metric":"water","value":2,"unit":null}]}`, "error: water must be at least 250 ml"},
 		{`{"goals":[{"metric":"water","value":2,"unit":"g"}]}`, "error: g is not a unit for water; use ml or l or oz"},
@@ -106,7 +106,7 @@ func TestSetGoalsValidation(t *testing.T) {
 		{`{"goals":[{"metric":"steps","value":10000,"unit":null}]}`, `error: unknown metric "steps"`},
 		{`{"goals":[{"metric":"water","value":2,"unit":"l"},{"metric":"water","value":3,"unit":"l"}]}`, "error: water is listed twice"},
 		// A bad goal rejects the whole call, so the good one is not saved either.
-		{`{"goals":[{"metric":"water","value":2,"unit":"l"},{"metric":"calories","value":800,"unit":null}]}`, "error: 800 cal is below"},
+		{`{"goals":[{"metric":"water","value":2,"unit":"l"},{"metric":"calories","value":20000,"unit":null}]}`, "error: calories must be at most 10,000 cal"},
 	} {
 		result, user := e.setGoals(c.args)
 		if c.want == "" {
@@ -121,17 +121,6 @@ func TestSetGoalsValidation(t *testing.T) {
 		if got := e.goals(user.ID); got != "" {
 			t.Errorf("%s: rejected call saved %s", c.args, got)
 		}
-	}
-}
-
-func TestCalorieFloorSetting(t *testing.T) {
-	e := newEnv(t)
-	e.agent.CalorieFloor = 1500
-	if result, _ := e.setGoals(`{"goals":[{"metric":"calories","value":1400,"unit":null}]}`); !strings.Contains(result, "safe minimum of 1,500 cal") {
-		t.Errorf("result = %q", result)
-	}
-	if !strings.Contains(e.llm.requests[0][0].Content, "below 1,500 cal a day") {
-		t.Errorf("prompt does not state the floor:\n%s", e.llm.requests[0][0].Content)
 	}
 }
 
@@ -221,9 +210,9 @@ func TestProgress(t *testing.T) {
 	}{
 		{"calories", 1240, goal(1800), true, "1,240 / 1,800 cal today, 560 cal to go"},
 		{"calories", 1800, goal(1800), true, "1,800 / 1,800 cal today, goal hit"},
-		{"calories", 1950, goal(1800), true, "1,950 / 1,800 cal today, 150 cal over"},
+		{"calories", 1950, goal(1800), true, "1,950 / 1,800 cal today, goal hit"},
 		{"protein", 170, goal(150), true, "170 / 150 g today, goal hit"},
-		{"fat", 80, goal(70), true, "80 / 70 g today, 10 g over"},
+		{"fat", 80, goal(70), true, "80 / 70 g today, goal hit"},
 		{"water", 750, goal(2000), true, "750 ml / 2 L today, 1.25 L to go"},
 		{"water", 2500, goal(2000), true, "2.5 / 2 L today, goal hit"},
 		{"calories", 350, store.Goal{}, true, "350 cal today"},

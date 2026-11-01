@@ -52,8 +52,6 @@ func TestEverySetting(t *testing.T) {
 		{"input_price", "0.15", "0.15", "0.15", "$1"},
 		{"output_price", "0.6", "0.6", "0.6", "NaN"},
 		{"log_level", "DEBUG", "debug", "debug", "loud"},
-		{"calorie_floor", "1,500", "1500", "1500", "0"},
-		{"goal_band", "5", "5", "5", "51"},
 		{"default_timezone", "Europe/Paris", "Europe/Paris", "Europe/Paris", "Mars/Base"},
 		{"default_wake", "6:30", "06:30", "06:30", "25:00"},
 		{"default_bedtime", "23:15", "23:15", "23:15", "late"},
@@ -142,8 +140,8 @@ func TestSettingUndo(t *testing.T) {
 // stored one and nothing is applied twice.
 func TestSettingReplay(t *testing.T) {
 	s, _ := settingsSim(t)
-	updateSetting(s, "goal_band", "7")
-	s.Script(sim.Call("update_setting", `{"key":"goal_band","value":"7"}`), sim.Say("Saved."))
+	updateSetting(s, "water_nudges", "3")
+	s.Script(sim.Call("update_setting", `{"key":"water_nudges","value":"3"}`), sim.Say("Saved."))
 	s.Rerun()
 	reqs := s.Requests()
 	msgs := reqs[len(reqs)-1]
@@ -259,17 +257,11 @@ func TestModelSetting(t *testing.T) {
 	}
 }
 
-// TestSettingsApply checks settings change what the agent does: the floor,
-// the defaults for a user who gave no times, and the log level.
+// TestSettingsApply checks settings change what the agent does: the defaults
+// for a user who gave no times, and the log level.
 func TestSettingsApply(t *testing.T) {
 	s, mon := settingsSim(t)
-	updateSetting(s, "calorie_floor", "1000")
-	s.Script(sim.Call("set_goals", `{"goals":[{"metric":"calories","value":1100,"unit":null}]}`), sim.Say("Saved."))
-	s.Text("1100 calories")
-	if rows := s.Rows(`SELECT value FROM goals WHERE metric = 'calories' AND value IS NOT NULL`); !slices.Equal(rows, []string{"1100"}) {
-		t.Errorf("goal = %q", rows)
-	}
-
+	s.Text("hi")
 	if _, err := s.Pool.Exec(s.Ctx, `UPDATE users SET wake_time = NULL, bedtime = NULL WHERE id = $1`, s.UserID); err != nil {
 		t.Fatal(err)
 	}
@@ -314,10 +306,10 @@ func TestSettingsApply(t *testing.T) {
 func TestStoredSettingIgnored(t *testing.T) {
 	s, _ := settingsSim(t)
 	if _, err := s.Pool.Exec(s.Ctx, `INSERT INTO settings (key, value, updated_at) VALUES
-		('calorie_floor', 'lots', now()), ('retired', 'x', now())`); err != nil {
+		('water_nudges', 'lots', now()), ('goal_band', '5', now())`); err != nil {
 		t.Fatal(err)
 	}
-	if p := prompt(s); !strings.Contains(p, "calorie_floor: 1200 (") || !strings.Contains(p, "below 1,200 cal a day") {
+	if p := prompt(s); !strings.Contains(p, "water_nudges: 1 (") || strings.Contains(p, "goal_band") {
 		t.Errorf("prompt:\n%s", p)
 	}
 }

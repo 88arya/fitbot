@@ -77,8 +77,6 @@ func run() error {
 			Pool:             pool,
 			Store:            sms.Store,
 			DefaultTimezone:  cfg.DefaultTimezone.String(),
-			CalorieFloor:     cfg.CalorieFloor,
-			GoalBand:         cfg.GoalBand,
 			GymFollowup:      cfg.GymFollowup,
 			SupplementReping: cfg.SupplementReping,
 			WaterNudges:      cfg.WaterNudges,

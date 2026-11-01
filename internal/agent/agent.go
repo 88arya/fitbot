@@ -44,11 +44,6 @@ type Agent struct {
 	// DefaultTimezone through WaterNudges are defaults, as are LLM's model
 	// and prices: a setting changed by text overrides them.
 	DefaultTimezone string
-	// CalorieFloor is the lowest daily calorie goal accepted; zero means 1,200.
-	CalorieFloor int
-	// GoalBand is how far from the goal, in percent, a day's calories,
-	// carbs, or fat can be and still count as on goal; zero means 10.
-	GoalBand int
 	// GymFollowup is how long after the gym reminder "Did you make it to the
 	// gym?" goes, if nothing is logged; zero means 2 hours.
 	GymFollowup time.Duration
@@ -390,13 +385,12 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			b.WriteString(m.label + ": not set\n")
 		}
 	}
-	fmt.Fprintf(&b, "Daily goals count against the user's local day. Save new or changed goals with set_goals; a change "+
-		"starts today, and earlier days keep the goal they had. Never make up a goal the user didn't give. Fitbot does "+
-		"not set a calorie goal below %s a day. Show amounts in cal, ml or L, g, hours, and lbs.\n",
-		metrics[0].format(a.calorieFloor()))
+	b.WriteString("Daily goals count against the user's local day. Save new or changed goals with set_goals; a change " +
+		"starts today, and earlier days keep the goal they had. Never make up a goal the user didn't give. Show amounts " +
+		"in cal, ml or L, g, hours, and lbs.\n")
 
 	b.WriteString(logs)
-	b.WriteString(a.questionSection())
+	b.WriteString(questionSection)
 
 	b.WriteString("\n## Memory\nFacts the user has told you, by id:\n")
 	if len(memories) == 0 {

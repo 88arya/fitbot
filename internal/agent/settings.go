@@ -28,8 +28,6 @@ const (
 	settingInputPrice  = "input_price"
 	settingOutputPrice = "output_price"
 	settingLogLevel    = "log_level"
-	settingFloor       = "calorie_floor"
-	settingBand        = "goal_band"
 	settingTimezone    = "default_timezone"
 	settingWake        = "default_wake"
 	settingBedtime     = "default_bedtime"
@@ -61,8 +59,6 @@ var settingDefs = []settingDef{
 	{settingInputPrice, "input price", "USD per 1M input tokens, 0 for unknown", parsePriceSetting},
 	{settingOutputPrice, "output price", "USD per 1M output tokens, 0 for unknown", parsePriceSetting},
 	{settingLogLevel, "log level", "debug, info, warn, or error", parseLogLevel},
-	{settingFloor, "calorie floor", "the lowest daily calorie goal accepted, 1 to 5000", parseIntSetting(config.ParseCalorieFloor)},
-	{settingBand, "goal band", "percent from the goal that calories, carbs, and fat stay on goal, 1 to 50", parseIntSetting(config.ParseGoalBand)},
 	{settingTimezone, "default timezone", "IANA timezone for a user who hasn't given one", parseTimezone},
 	{settingWake, "default wake time", "24-hour HH:MM for a user who hasn't given one", parseClock},
 	{settingBedtime, "default bedtime", "24-hour HH:MM for a user who hasn't given one", parseClock},
@@ -226,8 +222,6 @@ func (a *Agent) defaults() settingValues {
 		settingLogLevel:    strings.ToLower(a.DefaultLogLevel.String()),
 		settingInputPrice:  "0",
 		settingOutputPrice: "0",
-		settingFloor:       strconv.Itoa(cmp.Or(a.CalorieFloor, defaultCalorieFloor)),
-		settingBand:        strconv.Itoa(cmp.Or(a.GoalBand, defaultGoalBand)),
 		settingTimezone:    a.DefaultTimezone,
 		settingWake:        clock(scheduler.DefaultWake, "15:04"),
 		settingBedtime:     clock(scheduler.DefaultBedtime, "15:04"),

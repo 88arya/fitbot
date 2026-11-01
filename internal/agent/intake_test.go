@@ -170,23 +170,23 @@ func TestIntakeDays(t *testing.T) {
 		t.Errorf("log today = %q", r)
 	}
 	r := logged(t, s, "yesterday I had 2,100 cal", "log_intake", intake("2100", "date", `"2026-10-25"`))
-	if len(r) != 1 || !strings.HasSuffix(r[0], " yesterday. calories: 2,100 / 2,000 cal yesterday, 100 cal over.") {
+	if len(r) != 1 || !strings.HasSuffix(r[0], " yesterday. calories: 2,100 / 2,000 cal yesterday, goal hit.") {
 		t.Errorf("log yesterday = %q", r)
 	}
 	id := s.Rows(`SELECT max(id) FROM intake_logs`)[0]
 	r = logged(t, s, "actually that was saturday", "edit_log", `{"type":"calories","id":null,"amount":null,"unit":null,"date":"2026-10-24"}`)
-	want := "updated #" + id + ": now 2,100 cal on Oct 24. calories: 2,100 / 2,000 cal on Oct 24, 100 cal over. " +
+	want := "updated #" + id + ": now 2,100 cal on Oct 24. calories: 2,100 / 2,000 cal on Oct 24, goal hit. " +
 		"calories: 0 / 2,000 cal yesterday, 2,000 cal to go."
 	if fmt.Sprint(r) != "["+want+"]" {
 		t.Errorf("move result = %q\nwant %q", r, want)
 	}
 	if reply := s.Text("undo"); reply != "Undid moving 2,100 cal from Oct 25 to Oct 24. "+
-		"Calories: 2,100 / 2,000 cal yesterday, 100 cal over." {
+		"Calories: 2,100 / 2,000 cal yesterday, goal hit." {
 		t.Errorf("undo move = %q", reply)
 	}
 	// An edit that changes nothing doesn't claim the amount moved.
 	logged(t, s, "it was 2100", "edit_log", `{"type":"calories","id":null,"amount":2100,"unit":null,"date":null}`)
-	if reply := s.Text("undo"); reply != "Undid changing 2,100 cal to 2,100 cal. Calories: 2,100 / 2,000 cal yesterday, 100 cal over." {
+	if reply := s.Text("undo"); reply != "Undid changing 2,100 cal to 2,100 cal. Calories: 2,100 / 2,000 cal yesterday, goal hit." {
 		t.Errorf("undo no-op edit = %q", reply)
 	}
 

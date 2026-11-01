@@ -121,26 +121,15 @@ func TestStatsSpan(t *testing.T) {
 }
 
 func TestOnGoal(t *testing.T) {
-	calories, _ := metricByName("calories")
-	water, _ := metricByName("water")
-	a := &Agent{}
 	for _, c := range []struct {
-		m           metric
 		total, goal int
 		want        bool
 	}{
-		{calories, 1800, 1800, true}, {calories, 1620, 1800, true}, {calories, 1619, 1800, false},
-		{calories, 1980, 1800, true}, {calories, 1981, 1800, false},
-		{water, 2500, 2500, true}, {water, 9000, 2500, true}, {water, 2499, 2500, false},
+		{1800, 1800, true}, {1801, 1800, true}, {9000, 1800, true}, {1799, 1800, false}, {1, 1800, false},
 	} {
-		if got := a.onGoal(c.m, c.total, c.goal); got != c.want {
-			t.Errorf("onGoal(%s, %d, %d) = %v", c.m.name, c.total, c.goal, got)
+		if got := onGoal(c.total, c.goal); got != c.want {
+			t.Errorf("onGoal(%d, %d) = %v", c.total, c.goal, got)
 		}
-	}
-	// A narrower band from config.
-	a.GoalBand = 5
-	if !a.onGoal(calories, 1890, 1800) || a.onGoal(calories, 1891, 1800) {
-		t.Errorf("5%% band misjudged 1,890 or 1,891 against 1,800")
 	}
 }
 
@@ -148,24 +137,22 @@ func TestVerdict(t *testing.T) {
 	calories, _ := metricByName("calories")
 	water, _ := metricByName("water")
 	goal := func(v int32) store.Goal { return store.Goal{Value: pgtype.Int4{Int32: v, Valid: true}} }
-	a := &Agent{}
 	for _, c := range []struct {
 		m     metric
 		total int
 		g     store.Goal
 		want  string
 	}{
-		{calories, 1700, goal(1800), "1,700 / 1,800 cal yesterday, 100 cal under, on goal"},
-		{calories, 1800, goal(1800), "1,800 / 1,800 cal yesterday, on goal"},
-		{calories, 2300, goal(1800), "2,300 / 1,800 cal yesterday, 500 cal over, off goal"},
-		{calories, 1500, goal(1800), "1,500 / 1,800 cal yesterday, 300 cal under, off goal"},
+		{calories, 1799, goal(1800), "1,799 / 1,800 cal yesterday, 1 cal short, goal missed"},
+		{calories, 1800, goal(1800), "1,800 / 1,800 cal yesterday, goal hit"},
+		{calories, 2300, goal(1800), "2,300 / 1,800 cal yesterday, goal hit"},
 		{calories, 1500, store.Goal{}, "1,500 cal yesterday"},
 		{calories, 0, goal(1800), "nothing logged yesterday (goal 1,800 cal)"},
 		{water, 0, store.Goal{}, "nothing logged yesterday"},
 		{water, 1500, goal(2000), "1.5 / 2 L yesterday, 500 ml short, goal missed"},
 		{water, 2600, goal(2000), "2.6 / 2 L yesterday, goal hit"},
 	} {
-		if got := a.verdict(c.m, c.total, c.g, "yesterday"); got != c.want {
+		if got := verdict(c.m, c.total, c.g, "yesterday"); got != c.want {
 			t.Errorf("verdict(%s, %d) = %q, want %q", c.m.name, c.total, got, c.want)
 		}
 	}

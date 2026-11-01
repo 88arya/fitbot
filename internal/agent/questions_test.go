@@ -75,7 +75,7 @@ func (q questions) ask(body, tool, args string) string {
 // value as (local_date, v) for user $1, and metric names its goals.
 type dailyQ struct {
 	label, metric, src, noun string
-	atLeast, partial, total  bool
+	partial, total           bool
 }
 
 // dailyNums is a daily metric over a range of days, from SQL.
@@ -85,7 +85,7 @@ type dailyNums struct {
 }
 
 // judged is the SQL judging each day from $2 to $3 against the goal in
-// force then: at least the goal, or within 10% of it.
+// force then: at least the goal.
 func (d dailyQ) judged() string {
 	return `WITH v AS (` + d.src + `),
 		k AS (
@@ -94,8 +94,7 @@ func (d dailyQ) judged() string {
 				 ORDER BY g.start_date DESC LIMIT 1) AS goal
 			FROM generate_series($2::date, $3::date, interval '1 day') gs LEFT JOIN v ON v.local_date = gs::date),
 		j AS (
-			SELECT *, coalesce(v IS NOT NULL AND goal IS NOT NULL AND
-				CASE WHEN $5::bool THEN v >= goal ELSE abs(v - goal) * 100 <= goal * 10 END, false) AS on_goal
+			SELECT *, coalesce(v >= goal, false) AS on_goal
 			FROM k)`
 }
 
@@ -109,7 +108,7 @@ func (q questions) daily(d dailyQ, first, last time.Time) dailyNums {
 			coalesce((SELECT max(n) FROM (SELECT count(*) AS n FROM runs GROUP BY grp) r), 0)::int,
 			coalesce((SELECT array_agg(goal ORDER BY first) FROM (SELECT goal, min(day) AS first FROM j
 				WHERE goal IS NOT NULL GROUP BY goal) x), '{}')
-		FROM j`, q.s.UserID, first.Format(time.DateOnly), last.Format(time.DateOnly), d.metric, d.atLeast).
+		FROM j`, q.s.UserID, first.Format(time.DateOnly), last.Format(time.DateOnly), d.metric).
 		Scan(&n.logged, &n.total, &n.avg, &n.withGoal, &n.onGoal, &n.best, &n.goals)
 	if err != nil {
 		q.t.Fatal(err)
@@ -123,7 +122,7 @@ func (q questions) streak(d dailyQ, end time.Time) int {
 	var n int
 	err := q.s.Pool.QueryRow(q.s.Ctx, d.judged()+`
 		SELECT count(*) FROM j WHERE on_goal AND day > coalesce((SELECT max(day) FROM j WHERE NOT on_goal), '-infinity'::date)`,
-		q.s.UserID, end.AddDate(0, 0, -400).Format(time.DateOnly), end.Format(time.DateOnly), d.metric, d.atLeast).Scan(&n)
+		q.s.UserID, end.AddDate(0, 0, -400).Format(time.DateOnly), end.Format(time.DateOnly), d.metric).Scan(&n)
 	if err != nil {
 		q.t.Fatal(err)
 	}
@@ -158,14 +157,9 @@ func (d dailyQ) tallyText(n dailyNums, days int) string {
 	if len(n.goals) == 0 {
 		return out
 	}
-	rule := "each " + d.noun + "'s goal"
+	rule := "at least each " + d.noun + "'s goal"
 	if len(n.goals) == 1 {
-		rule = f(int(n.goals[0]))
-	}
-	if d.atLeast {
-		rule = "at least " + rule
-	} else {
-		rule = "within 10% of " + rule
+		rule = "at least " + f(int(n.goals[0]))
 	}
 	of := nounPlural(n.withGoal, d.noun) + " logged"
 	if n.withGoal < n.logged {
@@ -641,11 +635,11 @@ func TestQuestions(t *testing.T) {
 			`' AND deleted_at IS NULL GROUP BY local_date`
 	}
 	calories := dailyQ{label: "calories", metric: "calories", src: src("calories"), noun: "day", partial: true, total: true}
-	protein := dailyQ{label: "protein", metric: "protein", src: src("protein"), noun: "day", atLeast: true, partial: true, total: true}
+	protein := dailyQ{label: "protein", metric: "protein", src: src("protein"), noun: "day", partial: true, total: true}
 	fat := dailyQ{label: "fat", metric: "fat", src: src("fat"), noun: "day", partial: true, total: true}
-	water := dailyQ{label: "water", metric: "water", src: src("water"), noun: "day", atLeast: true, partial: true, total: true}
+	water := dailyQ{label: "water", metric: "water", src: src("water"), noun: "day", partial: true, total: true}
 	sleep := dailyQ{label: "sleep", metric: "sleep", src: `SELECT local_date, minutes AS v FROM sleep_logs WHERE user_id = $1 AND deleted_at IS NULL`,
-		noun: "night", atLeast: true}
+		noun: "night"}
 
 	type question struct {
 		body, tool, args, want string
@@ -742,13 +736,10 @@ func TestQuestions(t *testing.T) {
 			got = strings.TrimSuffix(got, unit)
 		}
 		s := got + " / " + of + " today"
-		switch {
-		case v < goal:
+		if v < goal {
 			return s + ", " + f(goal-v) + " to go"
-		case v == goal || metric == "protein" || metric == "water":
-			return s + ", goal hit"
 		}
-		return s + ", " + f(v-goal) + " over"
+		return s + ", goal hit"
 	}
 	wantToday := []string{
 		"Thu Oct 29 (today)",
@@ -783,43 +774,25 @@ func TestQuestions(t *testing.T) {
 	// taken, weighed in.
 	got = q.ask("did I hit my water yesterday", "get_day", dayCall(quote(q.day(-1))))
 	yCal, yWater, yProtein := total("calories", q.day(-1)), total("water", q.day(-1)), total("protein", q.day(-1))
-	verdict := func(metric string, v, goal int, atLeast bool) string {
+	verdict := func(metric string, v, goal int) string {
 		f := func(n int) string { return g(metric, n) }
 		got, of := f(v), f(goal)
 		if unit := of[strings.LastIndex(of, " "):]; strings.HasSuffix(got, unit) {
 			got = strings.TrimSuffix(got, unit)
 		}
 		s := got + " / " + of + " yesterday"
-		on := v >= goal
-		if !atLeast {
-			d := v - goal
-			if d < 0 {
-				d = -d
-			}
-			on = d*100 <= goal*10
-		}
-		switch {
-		case atLeast && on:
+		if v >= goal {
 			return s + ", goal hit"
-		case atLeast:
-			return s + ", " + f(goal-v) + " short, goal missed"
-		case v < goal:
-			s += ", " + f(goal-v) + " under"
-		case v > goal:
-			s += ", " + f(v-goal) + " over"
 		}
-		if on {
-			return s + ", on goal"
-		}
-		return s + ", off goal"
+		return s + ", " + f(goal-v) + " short, goal missed"
 	}
 	proteinText := "nothing logged yesterday (goal 150 g)"
 	if yProtein > 0 {
-		proteinText = verdict("protein", yProtein, 150, true)
+		proteinText = verdict("protein", yProtein, 150)
 	}
 	waterText := "nothing logged yesterday (goal 2.5 L)"
 	if yWater > 0 {
-		waterText = verdict("water", yWater, 2500, true)
+		waterText = verdict("water", yWater, 2500)
 	}
 	// Oct 28 has two weigh-ins; the first is its weight.
 	var weighIns []string
@@ -834,8 +807,8 @@ func TestQuestions(t *testing.T) {
 	yFirst := strings.TrimSuffix(weighIns[0][strings.Index(weighIns[0], ": ")+2:], ")")
 	for _, w := range []string{
 		"Wed Oct 28 (yesterday)\n",
-		"totals: calories: " + verdict("calories", yCal, 1800, false) + "; protein: " + proteinText + "; fat: " +
-			verdict("fat", total("fat", q.day(-1)), 70, false) + "; water: " + waterText + ".\n",
+		"totals: calories: " + verdict("calories", yCal, 1800) + "; protein: " + proteinText + "; fat: " +
+			verdict("fat", total("fat", q.day(-1)), 70) + "; water: " + waterText + ".\n",
 		"training plan: legs at 6:00 PM; workouts: legs done (#" +
 			idOf(`SELECT id FROM workouts WHERE user_id = $1 AND local_date = '2026-10-28'`, s.UserID) + ": legs done)\n",
 		"supplements yesterday: creatine taken, fish oil taken (#" +
@@ -862,7 +835,7 @@ func TestQuestions(t *testing.T) {
 	}
 	for _, w := range []string{
 		"Sun Oct 11\n",
-		"totals: calories: " + strings.Replace(verdict("calories", total("calories", date(10, 11)), 2000, false), "yesterday", "on Oct 11", 1),
+		"totals: calories: " + strings.Replace(verdict("calories", total("calories", date(10, 11)), 2000), "yesterday", "on Oct 11", 1),
 		"sleep: nothing logged for the night before Oct 11\n",
 		"training plan: rest; workouts: rest day, cardio done (extra) (#" +
 			idOf(`SELECT id FROM workouts WHERE user_id = $1 AND local_date = '2026-10-11'`, s.UserID) + ": cardio done)\n",
@@ -943,7 +916,7 @@ func TestQuestionsRefused(t *testing.T) {
 	reqs := s.Requests()
 	sys := reqs[len(reqs)-1][0].Content
 	if !strings.Contains(sys, "\n## Questions\nAnswer questions about how the user is doing from get_day and get_stats") ||
-		!strings.Contains(sys, "within 10% of it for calories, carbs, and fat") {
+		!strings.Contains(sys, "On goal means at least the goal, for every metric") {
 		t.Errorf("prompt lacks the questions section:\n%s", sys)
 	}
 }

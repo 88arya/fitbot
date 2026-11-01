@@ -20,7 +20,7 @@ func (q questions) wantWeekly(monday time.Time, metrics []dailyQ) string {
 		n := q.daily(d, first, last)
 		var goalDays int
 		if err := q.s.Pool.QueryRow(q.s.Ctx, d.judged()+` SELECT count(*) FILTER (WHERE goal IS NOT NULL) FROM j`,
-			q.s.UserID, first.Format(time.DateOnly), last.Format(time.DateOnly), d.metric, d.atLeast).Scan(&goalDays); err != nil {
+			q.s.UserID, first.Format(time.DateOnly), last.Format(time.DateOnly), d.metric).Scan(&goalDays); err != nil {
 			q.t.Fatal(err)
 		}
 		if n.logged == 0 && goalDays == 0 {
@@ -124,12 +124,12 @@ func TestWeeklySummary(t *testing.T) {
 	}
 	metrics := []dailyQ{
 		{label: "calories", metric: "calories", src: src("calories"), noun: "day"},
-		{label: "protein", metric: "protein", src: src("protein"), noun: "day", atLeast: true},
+		{label: "protein", metric: "protein", src: src("protein"), noun: "day"},
 		{label: "carbs", metric: "carbs", src: src("carbs"), noun: "day"},
 		{label: "fat", metric: "fat", src: src("fat"), noun: "day"},
-		{label: "water", metric: "water", src: src("water"), noun: "day", atLeast: true},
+		{label: "water", metric: "water", src: src("water"), noun: "day"},
 		{label: "sleep", metric: "sleep", src: `SELECT local_date, minutes AS v FROM sleep_logs WHERE user_id = $1 AND deleted_at IS NULL`,
-			noun: "night", atLeast: true},
+			noun: "night"},
 	}
 	for _, day := range []int{5, 12, 19, 26} {
 		monday := time.Date(2026, 10, day, 0, 0, 0, 0, time.UTC)
@@ -154,9 +154,9 @@ func TestWeeklySummary(t *testing.T) {
 	// hours on Oct 20, and there are no carbs to report.
 	got, err := s.Agent.CheckinText(s.Ctx, s.UserID, time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC), "weekly_summary", "")
 	want := "Last week (Oct 19 to Oct 25):\n" +
-		"Calories: 2,203 cal average over 6 days logged, on goal 2 of 7 days.\n" +
+		"Calories: 2,203 cal average over 6 days logged, on goal 6 of 7 days.\n" +
 		"Protein: 131 g average over 5 days logged, on goal 1 of 7 days.\n" +
-		"Fat: 71 g average, on goal 2 of 7 days.\n" +
+		"Fat: 71 g average, on goal 3 of 7 days.\n" +
 		"Water: 2.53 L average over 6 days logged, on goal 3 of 7 days.\n" +
 		"Sleep: 7 hours 12 min average over 6 nights logged, on goal 2 of 7 nights.\n" +
 		"Workouts: 6 of 8 planned sessions done, 2 skipped, plus 1 extra session " +

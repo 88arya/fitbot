@@ -23,11 +23,6 @@ type Config struct {
 
 	DefaultTimezone *time.Location
 	AllowedSenders  []string
-	// CalorieFloor is the lowest daily calorie goal Fitbot accepts.
-	CalorieFloor int
-	// GoalBand is how far from the goal, in percent, a day's calories,
-	// carbs, or fat can be and still count as on goal.
-	GoalBand int
 	// GymFollowup is how long after the gym reminder the follow-up goes.
 	GymFollowup time.Duration
 	// SupplementReping is how long after a supplement reminder it goes
@@ -65,24 +60,6 @@ func ParseTimezone(v string) (*time.Location, error) {
 		return nil, fmt.Errorf("%q is not an IANA timezone like America/Toronto", v)
 	}
 	return loc, nil
-}
-
-// ParseCalorieFloor reads the lowest daily calorie goal accepted.
-func ParseCalorieFloor(v string) (int, error) {
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > 5000 {
-		return 0, fmt.Errorf("%q is not a calorie amount from 1 to 5000", v)
-	}
-	return n, nil
-}
-
-// ParseGoalBand reads the on-goal band, in percent.
-func ParseGoalBand(v string) (int, error) {
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > 50 {
-		return 0, fmt.Errorf("%q is not a percent from 1 to 50", v)
-	}
-	return n, nil
 }
 
 // ParseGymFollowup reads how long after the gym reminder the follow-up goes.
@@ -163,18 +140,6 @@ func FromEnv(get func(string) string) (*Config, error) {
 		errs = append(errs, fmt.Errorf("DEFAULT_TIMEZONE: %w", err))
 	}
 	c.DefaultTimezone = tz
-
-	floor, err := ParseCalorieFloor(env("CALORIE_FLOOR", "1200"))
-	if err != nil {
-		errs = append(errs, fmt.Errorf("CALORIE_FLOOR: %w", err))
-	}
-	c.CalorieFloor = floor
-
-	band, err := ParseGoalBand(env("GOAL_BAND", "10"))
-	if err != nil {
-		errs = append(errs, fmt.Errorf("GOAL_BAND: %w", err))
-	}
-	c.GoalBand = band
 
 	followup, err := ParseGymFollowup(env("GYM_FOLLOWUP_DELAY", "2h"))
 	if err != nil {

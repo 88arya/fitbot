@@ -14,13 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	// statsLookback is how many days before today get_day and get_stats
-	// reach, and how far back a current streak is counted.
-	statsLookback = 366
-	// defaultGoalBand is the goal band when Agent.GoalBand is unset.
-	defaultGoalBand = 10
-)
+// statsLookback is how many days before today get_day and get_stats reach,
+// and how far back a current streak is counted.
+const statsLookback = 366
 
 // statsMetrics are what get_stats reports on.
 var statsMetrics = append(slices.Clone(intakeMetrics), "sleep", "weight", "workout", "supplement")
@@ -28,22 +24,10 @@ var statsMetrics = append(slices.Clone(intakeMetrics), "sleep", "weight", "worko
 // statsPeriods are the periods get_stats takes.
 var statsPeriods = []string{"last_days", "this_week", "last_week", "this_month", "last_month", "dates"}
 
-func (a *Agent) goalBand() int {
-	return a.settings().int(settingBand)
-}
-
-// onGoal reports whether a day's total meets its goal: at or above it for
-// protein, water, and sleep, and within the goal band of it for calories,
-// carbs, and fat.
-func (a *Agent) onGoal(m metric, total, goal int) bool {
-	if m.atLeast {
-		return total >= goal
-	}
-	d := total - goal
-	if d < 0 {
-		d = -d
-	}
-	return d*100 <= goal*a.goalBand()
+// onGoal reports whether a day's total meets its goal: at or above it, for
+// every metric.
+func onGoal(total, goal int) bool {
+	return total >= goal
 }
 
 // span is a range of local days, first to last.
@@ -228,7 +212,7 @@ type daily struct {
 
 // judge reports whether d has a value, whether it also has a goal, and
 // whether it meets that goal.
-func (a *Agent) judge(s daily, d pgtype.Date) (logged, withGoal, on bool) {
+func judge(s daily, d pgtype.Date) (logged, withGoal, on bool) {
 	v, ok := s.values[dateKey(d)]
 	if !ok {
 		return false, false, false
@@ -237,7 +221,7 @@ func (a *Agent) judge(s daily, d pgtype.Date) (logged, withGoal, on bool) {
 	if !g.Value.Valid {
 		return true, false, false
 	}
-	return true, true, a.onGoal(s.m, v, int(g.Value.Int32))
+	return true, true, onGoal(v, int(g.Value.Int32))
 }
 
 // tally is a daily metric over a span.
@@ -254,14 +238,14 @@ func (t tally) avg() int {
 	return int(math.Round(float64(t.total) / float64(t.logged)))
 }
 
-func (a *Agent) tallyDays(s daily, sp span) tally {
+func tallyDays(s daily, sp span) tally {
 	var t tally
 	run := 0
 	for d := sp.first; !d.Time.After(sp.last.Time); d = addDays(d, 1) {
 		if g := goalOn(s.goals, d); g.Value.Valid && !slices.Contains(t.goals, int(g.Value.Int32)) {
 			t.goals = append(t.goals, int(g.Value.Int32))
 		}
-		logged, withGoal, on := a.judge(s, d)
+		logged, withGoal, on := judge(s, d)
 		if logged {
 			t.logged++
 			t.total += s.values[dateKey(d)]
@@ -281,10 +265,10 @@ func (a *Agent) tallyDays(s daily, sp span) tally {
 }
 
 // streak counts the days on goal in a row ending on last.
-func (a *Agent) streak(s daily, last pgtype.Date) int {
+func streak(s daily, last pgtype.Date) int {
 	n := 0
 	for d := last; n < statsLookback; d = addDays(d, -1) {
-		if _, _, on := a.judge(s, d); !on {
+		if _, _, on := judge(s, d); !on {
 			break
 		}
 		n++
@@ -292,24 +276,19 @@ func (a *Agent) streak(s daily, last pgtype.Date) int {
 	return n
 }
 
-// goalRule says what counts as on goal, like "within 10% of 1,800 cal" or
-// "at least 2 L", or "each day's goal" when it changed. noun is day or
-// night.
-func (a *Agent) goalRule(m metric, goals []int, noun string) string {
-	of := "each " + noun + "'s goal"
+// goalRule says what counts as on goal, like "at least 2 L", or "at least
+// each day's goal" when it changed. noun is day or night.
+func goalRule(m metric, goals []int, noun string) string {
 	if len(goals) == 1 {
-		of = m.format(goals[0])
+		return "at least " + m.format(goals[0])
 	}
-	if m.atLeast {
-		return "at least " + of
-	}
-	return fmt.Sprintf("within %d%% of %s", a.goalBand(), of)
+	return "at least each " + noun + "'s goal"
 }
 
 // tallyText is a tally over days of s's noun, like "5 of 6 days logged,
-// 1,850 cal average a day logged, 9,250 cal total, on goal (within 10% of
-// 1,800 cal) on 3 of the 5 days logged, best streak 2 days".
-func (a *Agent) tallyText(s daily, t tally, days int, total bool) string {
+// 1,850 cal average a day logged, 9,250 cal total, on goal (at least 1,800
+// cal) on 3 of the 5 days logged, best streak 2 days".
+func tallyText(s daily, t tally, days int, total bool) string {
 	if t.logged == 0 {
 		return "nothing logged on " + plural(days, s.noun)
 	}
@@ -329,7 +308,7 @@ func (a *Agent) tallyText(s daily, t tally, days int, total bool) string {
 	if t.withGoal < t.logged {
 		of += " with a goal"
 	}
-	out += fmt.Sprintf(", on goal (%s) on %d of the %s", a.goalRule(s.m, t.goals, s.noun), t.onGoal, of)
+	out += fmt.Sprintf(", on goal (%s) on %d of the %s", goalRule(s.m, t.goals, s.noun), t.onGoal, of)
 	if t.onGoal > 0 && days > 1 {
 		out += ", best streak " + plural(t.best, s.noun)
 	}
@@ -338,7 +317,7 @@ func (a *Agent) tallyText(s daily, t tally, days int, total bool) string {
 
 // dailyStats reports on a daily metric over sp, against the span before
 // it, and its current streak.
-func (a *Agent) dailyStats(s daily, sp span, today pgtype.Date, total bool) string {
+func dailyStats(s daily, sp span, today pgtype.Date, total bool) string {
 	var parts []string
 	judged := sp
 	streakEnd := today
@@ -350,8 +329,8 @@ func (a *Agent) dailyStats(s daily, sp span, today pgtype.Date, total bool) stri
 	}
 	var t tally
 	if !judged.last.Time.Before(judged.first.Time) {
-		t = a.tallyDays(s, judged)
-		text := a.tallyText(s, t, judged.days(), total)
+		t = tallyDays(s, judged)
+		text := tallyText(s, t, judged.days(), total)
 		if !judged.last.Time.Equal(sp.last.Time) {
 			text = "complete days " + judged.dates() + ": " + text
 		}
@@ -361,14 +340,14 @@ func (a *Agent) dailyStats(s daily, sp span, today pgtype.Date, total bool) stri
 		parts = append(parts, "today so far: "+s.m.format(s.values[dateKey(today)])+", counted once the day ends")
 	}
 	if slices.ContainsFunc(s.goals, func(g store.Goal) bool { return g.Value.Valid }) {
-		if n := a.streak(s, streakEnd); n > 0 {
+		if n := streak(s, streakEnd); n > 0 {
 			parts = append(parts, fmt.Sprintf("current streak: %s on goal in a row through %s", plural(n, s.noun), s.when(streakEnd)))
 		} else {
 			parts = append(parts, "current streak: none, "+s.when(streakEnd)+" wasn't on goal")
 		}
 	}
 	prev := sp.before()
-	pt := a.tallyDays(s, prev)
+	pt := tallyDays(s, prev)
 	switch {
 	case pt.logged == 0:
 		parts = append(parts, prev.String()+": nothing logged to compare")
@@ -411,7 +390,7 @@ func (a *Agent) intakeStats(ctx context.Context, q *store.Queries, userID int64,
 		return fmt.Sprintf("%s: not tracked; the user has no %s goal and has logged none. They can start by setting a goal.",
 			m.label, m.label), nil
 	}
-	return a.dailyStats(s, sp, today, true), nil
+	return dailyStats(s, sp, today, true), nil
 }
 
 // sleepStats reports on the nights counting toward the days of sp. A night
@@ -431,7 +410,7 @@ func (a *Agent) sleepStats(ctx context.Context, q *store.Queries, userID int64, 
 	for _, r := range rows {
 		s.values[dateKey(r.LocalDate)] = int(r.Minutes)
 	}
-	return a.dailyStats(s, sp, today, false), nil
+	return dailyStats(s, sp, today, false), nil
 }
 
 // weightStats reports on the weigh-ins in sp, the change in the 7-day
@@ -920,15 +899,15 @@ func (a *Agent) dayTotals(ctx context.Context, q *store.Queries, user store.User
 		if m.name != "calories" && totals[m.name] == 0 && !g.Value.Valid {
 			continue
 		}
-		parts = append(parts, m.label+": "+a.verdict(m, totals[m.name], g, when))
+		parts = append(parts, m.label+": "+verdict(m, totals[m.name], g, when))
 	}
 	return strings.Join(parts, "; ") + ".", nil
 }
 
-// verdict is a past day's total against its goal, like "1,700 / 1,800 cal
-// yesterday, 100 cal under, on goal" or "1.5 / 2 L yesterday, 500 ml short,
-// goal missed". A day with nothing logged isn't judged.
-func (a *Agent) verdict(m metric, total int, g store.Goal, when string) string {
+// verdict is a past day's total against its goal, like "1,800 / 1,800 cal
+// yesterday, goal hit" or "1.5 / 2 L yesterday, 500 ml short, goal missed".
+// A day with nothing logged isn't judged.
+func verdict(m metric, total int, g store.Goal, when string) string {
 	if total == 0 {
 		if g.Value.Valid {
 			return "nothing logged " + when + " (goal " + m.format(int(g.Value.Int32)) + ")"
@@ -940,34 +919,20 @@ func (a *Agent) verdict(m metric, total int, g store.Goal, when string) string {
 	}
 	goal := int(g.Value.Int32)
 	s := ratio(m, total, goal) + " " + when
-	on := a.onGoal(m, total, goal)
-	switch {
-	case m.atLeast && on:
+	if onGoal(total, goal) {
 		return s + ", goal hit"
-	case m.atLeast:
-		return s + ", " + m.format(goal-total) + " short, goal missed"
-	case total < goal:
-		s += ", " + m.format(goal-total) + " under"
-	case total > goal:
-		s += ", " + m.format(total-goal) + " over"
 	}
-	if on {
-		return s + ", on goal"
-	}
-	return s + ", off goal"
+	return s + ", " + m.format(goal-total) + " short, goal missed"
 }
 
 // questionSection tells the model how to answer questions with get_day and
 // get_stats.
-func (a *Agent) questionSection() string {
-	return fmt.Sprintf("\n## Questions\nAnswer questions about how the user is doing from get_day and get_stats, never from your "+
-		"own math. get_day is one day: totals against goals and what's left today, everything logged, the training plan and "+
-		"workouts, supplements, and weight. get_stats is one metric over a period: averages, totals, days on goal, streaks, "+
-		"workouts planned, done, skipped, and missed by session, supplement doses taken, weight change, and the period before "+
-		"to compare. The sections above show only today and the last week, so call a tool for any other day, and for any "+
-		"average, total, or count. Periods: last_days with days, like 14 for \"the last 2 weeks\"; this_week or last_week "+
-		"(Monday to Sunday); this_month or last_month; dates with first and last for named days. Name a session, like legs, "+
-		"or a supplement in name to ask about just that one. Today's calories, macros, and water count toward averages once "+
-		"the day ends. On goal means at least the goal for protein, water, and sleep, and within %d%% of it for calories, "+
-		"carbs, and fat. Use the numbers in the result as given.\n", a.goalBand())
-}
+const questionSection = "\n## Questions\nAnswer questions about how the user is doing from get_day and get_stats, never from your " +
+	"own math. get_day is one day: totals against goals and what's left today, everything logged, the training plan and " +
+	"workouts, supplements, and weight. get_stats is one metric over a period: averages, totals, days on goal, streaks, " +
+	"workouts planned, done, skipped, and missed by session, supplement doses taken, weight change, and the period before " +
+	"to compare. The sections above show only today and the last week, so call a tool for any other day, and for any " +
+	"average, total, or count. Periods: last_days with days, like 14 for \"the last 2 weeks\"; this_week or last_week " +
+	"(Monday to Sunday); this_month or last_month; dates with first and last for named days. Name a session, like legs, " +
+	"or a supplement in name to ask about just that one. Today's calories, macros, and water count toward averages once " +
+	"the day ends. On goal means at least the goal, for every metric, with no leeway. Use the numbers in the result as given.\n"
