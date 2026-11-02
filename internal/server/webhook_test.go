@@ -30,6 +30,8 @@ type fakes struct {
 	mu       sync.Mutex
 	sends    []string
 	requests [][]llm.Message
+	// hold, if set, keeps sends waiting until it is closed.
+	hold chan struct{}
 }
 
 func (f *fakes) sent() []string {
@@ -77,6 +79,12 @@ func newHarness(t *testing.T) *harness {
 	telnyxAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Text string }
 		json.NewDecoder(r.Body).Decode(&req)
+		f.mu.Lock()
+		hold := f.hold
+		f.mu.Unlock()
+		if hold != nil {
+			<-hold
+		}
 		f.mu.Lock()
 		f.sends = append(f.sends, req.Text)
 		id := fmt.Sprintf("server-out-%d", uniq())
@@ -145,18 +153,31 @@ func (h *harness) text(id, body string) int {
 	}})
 }
 
-// waitSends waits until Fitbot has sent n texts.
+// waitSends waits until Fitbot has sent n texts and marked them sent. A text
+// reaches the fake Telnyx before it is marked, and tests read messages' rows.
 func (h *harness) waitSends(n int) []string {
 	h.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if s := h.fakes.sent(); len(s) >= n {
+		if s := h.fakes.sent(); len(s) >= n && h.sending() == 0 {
 			return s
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	h.t.Fatalf("timed out waiting for %d sends, got %v", n, h.fakes.sent())
 	return nil
+}
+
+// sending counts texts to the test's number still being sent.
+func (h *harness) sending() int {
+	h.t.Helper()
+	var n int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM messages m
+		JOIN users u ON u.id = m.user_id
+		WHERE u.phone = $1 AND m.direction = 'outbound' AND m.status = 'sending'`, h.phone).Scan(&n); err != nil {
+		h.t.Fatal(err)
+	}
+	return n
 }
 
 func TestWebhookConversation(t *testing.T) {
@@ -170,9 +191,8 @@ func TestWebhookConversation(t *testing.T) {
 	if code := h.text(inID, "hi"); code != http.StatusOK {
 		t.Fatalf("retried webhook: %d", code)
 	}
-	h.waitSends(1)
 	time.Sleep(200 * time.Millisecond)
-	if s := h.fakes.sent(); len(s) != 1 {
+	if s := h.waitSends(1); len(s) != 1 {
 		t.Fatalf("retried webhook caused another reply: %v", s)
 	}
 
@@ -243,6 +263,37 @@ func TestWebhookConversation(t *testing.T) {
 	// 100 input tokens at $1/M plus 10 output at $2/M, once.
 	if calls != 1 || llmCost != "0.00012000" {
 		t.Errorf("llm_calls: count=%d cost=%s", calls, llmCost)
+	}
+}
+
+// TestWaitForReplies checks shutdown can wait for a reply in progress, since
+// its text has been acknowledged and Telnyx won't send it again.
+func TestWaitForReplies(t *testing.T) {
+	h := newHarness(t)
+	hold := make(chan struct{})
+	release := sync.OnceFunc(func() { close(hold) })
+	defer release() // A held send would keep the fake Telnyx from closing.
+	h.fakes.mu.Lock()
+	h.fakes.hold = hold
+	h.fakes.mu.Unlock()
+
+	if code := h.text(fmt.Sprintf("server-in-%d", uniq()), "hi"); code != http.StatusOK {
+		t.Fatalf("webhook: %d", code)
+	}
+	short, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if h.sms.WaitReplies(short) {
+		t.Fatal("wait ended with a reply still sending")
+	}
+
+	release()
+	long, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if !h.sms.WaitReplies(long) {
+		t.Fatal("timed out waiting for the reply")
+	}
+	if s, n := h.fakes.sent(), h.sending(); len(s) != 1 || n != 0 {
+		t.Errorf("sent = %q, still sending = %d", s, n)
 	}
 }
 

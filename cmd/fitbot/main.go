@@ -130,10 +130,15 @@ func run() error {
 		slog.Info("shutting down")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Less than stop_grace_period in the compose files, or Docker kills this
+	// first.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	stop()
 	err = errors.Join(serveErr, srv.Shutdown(shutdownCtx))
+	if sms != nil && !sms.WaitReplies(shutdownCtx) {
+		slog.Warn("replies did not finish in time")
+	}
 	select {
 	case <-sched:
 	case <-shutdownCtx.Done():

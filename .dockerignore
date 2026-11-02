@@ -6,3 +6,6 @@ dist
 *.md
 .github
 .claude
+infra
+deploy
+scripts

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/88arya/fitbot/internal/agent"
@@ -27,6 +28,8 @@ type SMS struct {
 	Telnyx         *telnyx.Client
 	Agent          *agent.Agent
 	AllowedSenders []string
+
+	replies sync.WaitGroup
 }
 
 func (s *SMS) handleTelnyx(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +103,24 @@ func (s *SMS) handleInbound(w http.ResponseWriter, r *http.Request, e telnyx.Eve
 	}
 	slog.Info("text received", "id", e.ID, "from", e.From, "message_id", msg.ID)
 
-	go s.reply(context.WithoutCancel(ctx), user, msg)
+	s.replies.Go(func() { s.reply(context.WithoutCancel(ctx), user, msg) })
+}
+
+// WaitReplies waits for replies in progress and reports whether they all
+// finished before ctx ended. Shutdown needs this because a text is
+// acknowledged before its reply, so Telnyx won't send it again.
+func (s *SMS) WaitReplies(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() {
+		s.replies.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (s *SMS) handleDelivery(w http.ResponseWriter, r *http.Request, e telnyx.Event) {

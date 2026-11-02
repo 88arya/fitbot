@@ -3,7 +3,8 @@ name: CI
 on:
   pull_request:
   push:
-    branches-ignore: [main]
+    # Dependabot branches get a pull_request run; main goes through CD.
+    branches-ignore: [main, "dependabot/**"]
   workflow_call:
 
 permissions:

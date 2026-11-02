@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-fitbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -35,6 +36,8 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    # Time to finish replies in progress.
+    stop_grace_period: 30s
 
 volumes:
   pgdata:
