@@ -1,0 +1,51 @@
+name: Merge dependencies
+
+# Dependabot opens its PRs around the 1st of the month. This merges them on the
+# 8th, which leaves a week to stop one by closing it. main isn't protected, so
+# GitHub's own auto-merge wouldn't wait for checks; this looks at them itself.
+on:
+  schedule:
+    - cron: "0 14 8 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Squash-merge passing PRs
+        run: |
+          merged=0
+          for pr in $(gh pr list --author app/dependabot --state open --limit 100 --json number --jq '.[].number'); do
+            # A new Postgres image can't read the existing data files, and CI
+            # can't see that because it starts from an empty database.
+            diff=$(gh pr diff "$pr")
+            if grep -q '^+.*image: postgres' <<< "$diff"; then
+              echo "#$pr: skipped, changes Postgres"
+              continue
+            fi
+            if ! gh pr checks "$pr" > /dev/null; then
+              echo "#$pr: skipped, checks not passing"
+              continue
+            fi
+            if gh pr merge "$pr" --squash --delete-branch; then
+              echo "#$pr: merged"
+              merged=$((merged + 1))
+            else
+              echo "#$pr: could not merge"
+            fi
+          done
+
+          # Merges made with this token don't start CD by themselves.
+          if [ "$merged" -gt 0 ]; then
+            gh workflow run cd.yml --ref main
+          fi

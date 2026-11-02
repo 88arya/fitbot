@@ -2,31 +2,31 @@ version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
     groups:
       go:
         patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
     groups:
       actions:
         patterns: ["*"]
   - package-ecosystem: docker
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
     groups:
       docker:
         patterns: ["*"]
   - package-ecosystem: docker-compose
     directories: ["/", "/deploy"]
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
     groups:
       compose:
         patterns: ["*"]
   - package-ecosystem: terraform
     directory: /infra/terraform
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
     groups:
       terraform:
         patterns: ["*"]
