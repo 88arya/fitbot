@@ -147,15 +147,17 @@ type goalsArgs struct {
 	Goals []goalArg `json:"goals"`
 }
 
+// goalChange is one goal set_goals is saving.
+type goalChange struct {
+	m     metric
+	value pgtype.Int4
+}
+
 func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, error) {
 	if len(args.Goals) == 0 {
 		return "error: no goals given", nil
 	}
-	type change struct {
-		m     metric
-		value pgtype.Int4
-	}
-	var changes []change
+	var changes []goalChange
 	seen := map[string]bool{}
 	for _, g := range args.Goals {
 		m, ok := metricByName(g.Metric)
@@ -167,14 +169,14 @@ func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, 
 		}
 		seen[m.name] = true
 		if g.Value == nil {
-			changes = append(changes, change{m: m})
+			changes = append(changes, goalChange{m: m})
 			continue
 		}
 		v, errText := canonicalGoal(m, *g.Value, g.Unit)
 		if errText != "" {
 			return "error: " + errText, nil
 		}
-		changes = append(changes, change{m, pgtype.Int4{Int32: int32(v), Valid: true}})
+		changes = append(changes, goalChange{m, pgtype.Int4{Int32: int32(v), Valid: true}})
 	}
 
 	user, err := c.q.GetUser(ctx, c.userID)
@@ -182,8 +184,19 @@ func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, 
 		return "", err
 	}
 	today := a.localDate(user)
+	changes, plan, errText, err := a.planGoals(ctx, c, user, today, changes)
+	if err != nil {
+		return "", err
+	}
+	if errText != "" {
+		return "error: " + errText, nil
+	}
 	undo := &undoRecord{Op: undoRestoreGoals, Day: today.Time.Format(time.DateOnly)}
 	var saved []string
+	if plan != nil {
+		undo.Targets = &plan.before
+		saved = append(saved, "calorie and macro targets")
+	}
 	for _, ch := range changes {
 		// A change made earlier today is replaced, so undo puts its value
 		// back; otherwise undo removes today's row.
@@ -206,7 +219,11 @@ func (a *Agent) setGoals(ctx context.Context, c *call, args goalsArgs) (string, 
 	}
 	undo.Desc = "setting goals (" + strings.Join(saved, "; ") + ")"
 	c.undo = undo
-	return "saved, starting today: " + strings.Join(saved, "; "), nil
+	result := "saved, starting today: " + strings.Join(saved, "; ")
+	if plan != nil && plan.text != "" {
+		result += ". " + plan.text
+	}
+	return result, nil
 }
 
 // canonicalGoal converts value in unit to m's canonical unit and checks it

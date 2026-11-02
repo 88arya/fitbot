@@ -1,8 +1,9 @@
 -- name: SetBodyState :exec
-INSERT INTO body_states (user_id, state, start_date)
-VALUES (@user_id, @state, @start_date)
+INSERT INTO body_states (user_id, state, start_date, tier, calorie_delta, protein_g, fat_g)
+VALUES (@user_id, @state, @start_date, sqlc.narg(tier), sqlc.narg(calorie_delta), sqlc.narg(protein_g), sqlc.narg(fat_g))
 ON CONFLICT (user_id, start_date) DO UPDATE
-SET state = EXCLUDED.state, updated_at = now();
+SET state = EXCLUDED.state, tier = EXCLUDED.tier, calorie_delta = EXCLUDED.calorie_delta,
+    protein_g = EXCLUDED.protein_g, fat_g = EXCLUDED.fat_g, updated_at = now();
 
 -- name: BodyStateOnDay :one
 -- The state row that starts on day, if a change was made that day.

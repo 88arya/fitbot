@@ -206,9 +206,10 @@ func TestToolsUpdateProfileAndMemory(t *testing.T) {
 	}
 }
 
-// question is setup step i's question for a user who has answered none of it.
+// question is setup step i's question for a user who sets their own goals
+// and has answered none of it.
 func question(i int) string {
-	return fields[i].question(setupState{})
+	return fields[i].question(setupState{manual: true})
 }
 
 func TestSetup(t *testing.T) {
@@ -219,7 +220,7 @@ func TestSetup(t *testing.T) {
 		calls("set_profile", `{"name":null,"timezone":"America/Toronto","wake_time":null,"bedtime":null}`), gotIt,
 		calls("set_profile", `{"name":null,"timezone":null,"wake_time":"6:30","bedtime":null}`), gotIt,
 		calls("set_profile", `{"name":null,"timezone":null,"wake_time":null,"bedtime":"23:00"}`), gotIt,
-		calls("set_state", `{"state":"cut"}`), gotIt,
+		calls("set_state", `{"state":"cut","tier":"manual"}`), gotIt,
 		calls("set_goals", `{"goals":[{"metric":"water","value":3,"unit":"l"}]}`), gotIt,
 		calls("set_goals", `{"goals":[{"metric":"calories","value":2200,"unit":null},{"metric":"protein","value":160,"unit":"g"}]}`), gotIt,
 		calls("set_goals", `{"goals":[{"metric":"sleep","value":null,"unit":null}]}`), gotIt,
@@ -238,12 +239,12 @@ func TestSetup(t *testing.T) {
 		// A partial answer asks only for the rest.
 		{"up at 6:30", "Got it. And what time do you usually go to bed?"},
 		{"11pm", "Got it. " + question(3)},
-		{"cutting", "Got it. " + question(4)},
+		{"cutting", "Got it. " + question(10)},
 		{"3 litres of water", `Got it. And your daily calorie goal? Say "none" if you don't want to track it.`},
-		{"2200 cal, 160g protein", "Got it. " + question(5)},
-		{"none", "Got it. " + question(6)},
-		{"none", "Got it. " + question(7)},
-		{"full body one day, rest the next", "Got it. " + question(8)},
+		{"2200 cal, 160g protein", "Got it. " + question(11)},
+		{"none", "Got it. " + question(12)},
+		{"none", "Got it. " + question(13)},
+		{"full body one day, rest the next", "Got it. " + question(14)},
 		{"none", "Got it. " + setupDone},
 		{"hey", "Hey Arya."},
 	} {

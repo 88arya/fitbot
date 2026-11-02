@@ -29,10 +29,14 @@ func TestOnboardingEndToEnd(t *testing.T) {
 			"What time do you usually wake up and go to bed?"},
 		{"6:15, and bed around 10:30", "set_profile", `{"name":null,"timezone":null,"wake_time":"06:15","bedtime":"22:30"}`,
 			"Are you looking to bulk, maintain, or cut right now?"},
-		{"cut", "set_state", `{"state":"cut"}`, "What are your daily calorie and water goals?"},
-		{"2000 cal and 2.5L water, 150g protein", "set_goals",
-			`{"goals":[{"metric":"calories","value":2000,"unit":"cal"},{"metric":"water","value":2.5,"unit":"l"},{"metric":"protein","value":150,"unit":"g"}]}`,
-			"How many hours of sleep"},
+		{"cut", "set_state", `{"state":"cut","tier":null,"daily_calories":null,"weekly_rate":null,"rate_unit":null}`, "How fast? Light"},
+		{"moderate", "set_state", `{"state":"cut","tier":"moderate","daily_calories":null,"weekly_rate":null,"rate_unit":null}`, "What do you weigh right now?"},
+		{"180", "log_weight", `{"weight":180,"unit":null,"date":null}`, "How tall are you?"},
+		{"5'10", "set_profile", `{"height_ft":5,"height_in":10}`, "How old are you?"},
+		{"30", "set_profile", `{"age":30}`, "Male or female?"},
+		{"male", "set_profile", `{"sex":"male"}`, "How active are you?"},
+		{"gym 4 days", "set_profile", `{"activity":"moderate"}`, "What's your daily water goal?"},
+		{"2.5L", "set_goals", `{"goals":[{"metric":"water","value":2.5,"unit":"l"}]}`, "How many hours of sleep"},
 		{"8 hours", "set_goals", `{"goals":[{"metric":"sleep","value":8,"unit":"hours"}]}`, "Do you have a target weight?"},
 		{"175 lbs", "set_goals", `{"goals":[{"metric":"weight","value":175,"unit":"lbs"}]}`, "What's your training schedule?"},
 		{"none", "set_schedule", `{"kind":null,"days":[],"cycle_day_today":null,"training_time":null}`, "Do you take any supplements?"},
@@ -49,8 +53,8 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	user := `SELECT name, timezone, wake_time::text, bedtime::text FROM users`
 	goals := `SELECT metric, value, start_date::text FROM goals ORDER BY metric`
 	wantUser := "[Sam | America/Toronto | 06:15:00 | 22:30:00]"
-	wantGoals := "[calories | 2000 | 2026-10-20 protein | 150 | 2026-10-20 sleep | 480 | 2026-10-20 " +
-		"water | 2500 | 2026-10-20 weight | 79379 | 2026-10-20]"
+	wantGoals := "[calories | 2260 | 2026-10-20 carbs | 243 | 2026-10-20 fat | 63 | 2026-10-20 protein | 180 | 2026-10-20 " +
+		"sleep | 480 | 2026-10-20 water | 2500 | 2026-10-20 weight | 79379 | 2026-10-20]"
 	check := func(when string) {
 		t.Helper()
 		if got := s.Rows(user); fmt.Sprint(got) != wantUser {
@@ -59,7 +63,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 		if got := s.Rows(goals); fmt.Sprint(got) != wantGoals {
 			t.Errorf("%s: goals = %v\nwant %s", when, got, wantGoals)
 		}
-		if got := s.Rows(`SELECT state, start_date::text FROM body_states`); fmt.Sprint(got) != "[cut | 2026-10-20]" {
+		if got := s.Rows(`SELECT state, tier, calorie_delta, start_date::text FROM body_states`); fmt.Sprint(got) != "[cut | moderate | -500 | 2026-10-20]" {
 			t.Errorf("%s: state = %v", when, got)
 		}
 		if got := s.Rows(`SELECT kind, start_date::text FROM training_schedules`); fmt.Sprint(got) != "[<nil> | 2026-10-20]" {
@@ -93,7 +97,7 @@ func TestOnboardingEndToEnd(t *testing.T) {
 	before := len(s.Sends())
 	s.Set(time.Date(2026, 10, 21, 6, 15, 0, 0, loc))
 	s.Tick()
-	want := "Good morning, Sam. Goals: 2,000 cal, 150 g protein, 2.5 L water. Supplements: creatine 5 g at night (10:30 PM). " +
+	want := "Good morning, Sam. Goals: 2,260 cal, 180 g protein, 243 g carbs, 63 g fat, 2.5 L water. Supplements: creatine 5 g at night (10:30 PM). " +
 		"How did you sleep?"
 	if sends := s.WaitSends(before + 1); sends[before] != want {
 		t.Errorf("check-in = %q", sends[before])

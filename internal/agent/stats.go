@@ -984,4 +984,5 @@ const questionSection = "\n## Questions\nAnswer questions about how the user is 
 	"(Monday to Sunday); this_month or last_month; dates with first and last for named days. Name a session, like legs, " +
 	"or a supplement in name to ask about just that one. Today's calories, macros, and water count toward averages once " +
 	"the day ends. On goal means at least the goal, except calories on a cut or maintain, where it means at most the goal, " +
-	"with no leeway. get_stats weight also shows the target and actual state. Use the numbers in the result as given.\n"
+	"with no leeway. get_stats weight also shows the target and actual state, and get_plan shows the plan, its targets, and " +
+	"progress against the planned rate. Use the numbers in the result as given.\n"

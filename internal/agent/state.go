@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/88arya/fitbot/internal/db/store"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -36,7 +34,69 @@ const (
 )
 
 type stateArgs struct {
-	State string `json:"state"`
+	State string  `json:"state"`
+	Tier  *string `json:"tier"`
+	// DailyCalories is a custom daily deficit or surplus, and WeeklyRate a
+	// custom pace in RateUnit a week.
+	DailyCalories *float64 `json:"daily_calories"`
+	WeeklyRate    *float64 `json:"weekly_rate"`
+	RateUnit      *string  `json:"rate_unit"`
+}
+
+// stateRate works out the tier and daily change a call asks for, keeping the
+// current ones where it names none, or returns why not.
+func stateRate(args stateArgs, old store.BodyState, hasOld bool) (pgtype.Text, pgtype.Int4, string) {
+	var tier pgtype.Text
+	var delta pgtype.Int4
+	if args.DailyCalories != nil && args.WeeklyRate != nil {
+		return tier, delta, "give daily_calories or weekly_rate, not both"
+	}
+	custom := args.DailyCalories != nil || args.WeeklyRate != nil
+	if custom && args.Tier != nil {
+		return tier, delta, "give a tier or a custom rate, not both"
+	}
+	switch {
+	case custom:
+		if args.State == stateMaintain {
+			return tier, delta, "maintain has no rate"
+		}
+		var size float64
+		if args.DailyCalories != nil {
+			size = *args.DailyCalories
+		} else {
+			size = *args.WeeklyRate * caloriesPerPound / 7
+			if args.RateUnit != nil && *args.RateUnit == "kg" {
+				size *= 1000 / gramsPerPound
+			}
+		}
+		if math.IsNaN(size) || size <= 0 {
+			return tier, delta, "the rate must be a positive amount; the state says which way"
+		}
+		n := int(math.Round(size))
+		if n > maxDailyDelta {
+			return tier, delta, fmt.Sprintf("%s cal a day is more than the %s cal a day (7,000 a week) Fitbot will set either way. Suggest %s cal a day at most.",
+				commas(n), commas(maxDailyDelta), commas(maxDailyDelta))
+		}
+		if args.State == stateCut {
+			n = -n
+		}
+		return pgtype.Text{String: tierCustom, Valid: true}, pgtype.Int4{Int32: int32(n), Valid: true}, ""
+	case args.Tier != nil && *args.Tier == tierManual:
+		return pgtype.Text{String: tierManual, Valid: true}, delta, ""
+	case args.Tier != nil:
+		d, ok := tierDeltas[*args.Tier]
+		if !ok || (args.State == stateCut) != (d < 0) || args.State == stateMaintain {
+			return tier, delta, fmt.Sprintf("%q isn't a tier for %s: a cut is light, moderate, aggressive, or extreme, and a bulk is lean, standard, or dirty", *args.Tier, args.State)
+		}
+		return pgtype.Text{String: *args.Tier, Valid: true}, pgtype.Int4{Int32: int32(d), Valid: true}, ""
+	case hasOld && isManual(old):
+		return old.Tier, delta, ""
+	case hasOld && old.State == args.State:
+		return old.Tier, old.CalorieDelta, ""
+	case args.State == stateMaintain:
+		return tier, pgtype.Int4{Valid: true}, ""
+	}
+	return tier, delta, ""
 }
 
 func (a *Agent) setState(ctx context.Context, c *call, args stateArgs) (string, error) {
@@ -52,24 +112,42 @@ func (a *Agent) setState(ctx context.Context, c *call, args stateArgs) (string, 
 	if err != nil {
 		return "", err
 	}
-	if stateOn(states, today) == args.State {
-		return "the state is already " + args.State, nil
+	old, hasOld := stateRowOn(states, today)
+	tier, delta, errText := stateRate(args, old, hasOld)
+	if errText != "" {
+		return "error: " + errText, nil
+	}
+	if hasOld && old.State == args.State && old.Tier == tier && old.CalorieDelta == delta {
+		return "the state is already " + planName(args.State, tier), nil
 	}
 	// A change made earlier today is replaced, so undo puts it back;
 	// otherwise undo removes today's row.
-	undo := &undoRecord{Op: undoRestoreState, Desc: "setting the state to " + args.State, Day: today.Time.Format(time.DateOnly)}
-	old, err := c.q.BodyStateOnDay(ctx, store.BodyStateOnDayParams{UserID: c.userID, StartDate: today})
-	switch {
-	case err == nil:
-		undo.Value = &old.State
-	case !errors.Is(err, pgx.ErrNoRows):
+	before, err := loadStateBefore(ctx, c.q, c.userID, today)
+	if err != nil {
 		return "", err
 	}
-	if err := c.q.SetBodyState(ctx, store.SetBodyStateParams{UserID: c.userID, State: args.State, StartDate: today}); err != nil {
+	row := store.BodyState{UserID: c.userID, State: args.State, Tier: tier, CalorieDelta: delta, ProteinG: old.ProteinG, FatG: old.FatG}
+	if err := saveStateRow(ctx, c.q, row, today); err != nil {
 		return "", err
 	}
-	c.undo = undo
-	return "saved, starting today: state " + args.State + ". Calories are on goal " + calorieRule(args.State) + ".", nil
+	result := "saved, starting today: state " + planName(args.State, tier) + ". Calories are on goal " + calorieRule(args.State) + "."
+	targets := &targetsBefore{Day: today.Time.Format(time.DateOnly), State: before}
+	if tier.String != tierManual {
+		res, errText, err := a.updateTargets(ctx, c.q, user, today, targetOpts{reason: "plan", strict: true,
+			detail: "you chose " + planName(args.State, tier)})
+		if err != nil {
+			return "", err
+		}
+		if errText != "" {
+			return "error: " + errText, nil
+		}
+		if res != nil {
+			targets.Goals, targets.ChangeID = res.before.Goals, res.before.ChangeID
+			result += " " + res.text
+		}
+	}
+	c.undo = &undoRecord{Op: undoRestoreState, Desc: "setting the state to " + planName(args.State, tier), Day: today.Time.Format(time.DateOnly), Targets: targets}
+	return result, nil
 }
 
 // stateOn is the state in force on day: the last to start by then, or the
@@ -220,10 +298,25 @@ func (a *Agent) stateSection(ctx context.Context, user store.User) (string, erro
 	} else {
 		fmt.Fprintf(&b, "%s. Calories are on goal %s.\n", t.forModel(), calorieRule(t.state))
 	}
+	status, err := a.planStatus(ctx, a.Store, user)
+	if err != nil {
+		return "", fmt.Errorf("loading plan: %w", err)
+	}
+	b.WriteString(status + "\n")
 	b.WriteString("The target state is bulk, maintain, or cut, the one the user chose, saved with set_state; a change starts today, " +
 		"and earlier days keep the state they had. The actual state comes from the change in the 7-day average weight: gaining " +
-		"is bulk, holding steady is maintain, losing is cut. Maintenance is the calories that would hold their weight, worked " +
-		"out for you from their logs. Use these as given to answer whether they're on track, and never suggest or change a " +
-		"calorie goal from them unless they ask to set one.\n")
+		"is bulk, holding steady is maintain, losing is cut. The maintenance above comes from their logs and is only a check. " +
+		"Use these as given to answer whether they're on track.\n" +
+		"The state is the user's overall objective, and code works out their calorie and macro targets from it and saves them as " +
+		"goals, so never work out a target yourself. Call set_state when the user clearly asks to change state or rate: tier for " +
+		"a named pace, daily_calories or weekly_rate for their own. A tentative message like \"I think my loss has stalled\" or " +
+		"\"maybe I should bulk\" isn't a change, so answer from get_plan or ask first. Something temporary, like a vacation or " +
+		"a sick week, never changes the state. Reply to a change with the targets and how they were worked out from the tool " +
+		"result; historical logs are kept and \"undo\" reverts it. If a tool refuses a rate as unsafe, explain why and offer the " +
+		"alternative it gives. Height, age, sex, and activity are saved with set_profile, and targets follow. If the user " +
+		"mentions pregnancy, an eating disorder, or a medical condition, don't change their targets and suggest they ask a " +
+		"doctor. Tier manual means the user sets their own goals: never suggest or change a calorie goal for them unless they " +
+		"ask. Answer \"am I on track\", \"how much should I have lost\", and \"why did my target change\" from get_plan, and \"how " +
+		"much is left\" or \"how much for dinner\" from get_day.\n")
 	return b.String(), nil
 }

@@ -72,7 +72,14 @@ var tools = []tool{
 				"name":      map[string]any{"type": []string{"string", "null"}, "description": "What the user wants to be called, capitalized normally."},
 				"timezone":  map[string]any{"type": []string{"string", "null"}, "description": "IANA timezone, like America/Toronto."},
 				"wake_time": map[string]any{"type": []string{"string", "null"}, "description": "When the user usually wakes up, 24-hour HH:MM."},
-				"bedtime":   map[string]any{"type": []string{"string", "null"}, "description": "When the user usually goes to bed, 24-hour HH:MM."},
+				"height_ft": map[string]any{"type": []string{"number", "null"}, "description": "Height's feet, as the user said it, like 5 for 5'10\"."},
+				"height_in": map[string]any{"type": []string{"number", "null"}, "description": "Height's inches, as the user said it, with height_ft."},
+				"height_cm": map[string]any{"type": []string{"number", "null"}, "description": "Height in cm, only if the user said cm."},
+				"age":       map[string]any{"type": []string{"integer", "null"}, "description": "The user's age in years."},
+				"sex":       map[string]any{"type": []string{"string", "null"}, "enum": []any{"male", "female", nil}, "description": "For the calorie formula."},
+				"activity": map[string]any{"type": []string{"string", "null"}, "enum": append(anySlice(activityLevels), nil),
+					"description": "How active the user is: sedentary (desk job, little exercise), light (1-3 days a week), moderate (3-5), active (6-7), very_active (hard daily training or a physical job)."},
+				"bedtime": map[string]any{"type": []string{"string", "null"}, "description": "When the user usually goes to bed, 24-hour HH:MM."},
 				"morning_checkin": map[string]any{"type": []string{"string", "null"},
 					"description": "When the morning check-in goes, 24-hour HH:MM, or default to send it at the wake time."},
 				"night_checkin": map[string]any{"type": []string{"string", "null"},
@@ -86,10 +93,20 @@ var tools = []tool{
 	{
 		spec: llm.Tool{
 			Name: "set_state",
-			Description: "Set whether the user is bulking, maintaining, or cutting. A change starts today; earlier days keep the " +
-				"state they had. It decides how calories are judged: at or above the goal on a bulk, at or under it otherwise.",
+			Description: "Set whether the user is bulking, maintaining, or cutting, and how fast. A change starts today; earlier " +
+				"days keep the state they had. Code works out and saves their calorie and macro targets from it, and refuses a " +
+				"rate that isn't safe for them. Calories are judged at or above the goal on a bulk, at or under it otherwise.",
 			Parameters: object(map[string]any{
 				"state": map[string]any{"type": "string", "enum": bodyStates},
+				"tier": map[string]any{"type": []string{"string", "null"}, "enum": tierNames,
+					"description": "Cut: light, moderate, aggressive, or extreme. Bulk: lean, standard, or dirty. manual means the user " +
+						"sets their own goals, for any state. null keeps the current rate, or leaves it to be asked."},
+				"daily_calories": map[string]any{"type": []string{"number", "null"},
+					"description": "A custom daily deficit or surplus the user named, positive either way, like 400. null otherwise."},
+				"weekly_rate": map[string]any{"type": []string{"number", "null"},
+					"description": "A custom pace the user named, like 1.5 for 1.5 lbs a week, positive either way. null otherwise."},
+				"rate_unit": map[string]any{"type": []string{"string", "null"}, "enum": []any{"lbs", "kg", nil},
+					"description": "weekly_rate's unit; null for lbs."},
 			}),
 		},
 		run: handle((*Agent).setState),
@@ -244,6 +261,15 @@ var tools = []tool{
 			}),
 		},
 		run: handle((*Agent).getStats),
+	},
+	{
+		spec: llm.Tool{
+			Name: "get_plan",
+			Description: "Look up the user's plan: state and rate, targets and how they were worked out, weight against what was " +
+				"planned by now, the latest weekly review, and why targets changed.",
+			Parameters: object(map[string]any{}),
+		},
+		run: handle((*Agent).getPlan),
 	},
 	{
 		spec: llm.Tool{
@@ -494,6 +520,7 @@ type profileArgs struct {
 	MorningCheckin *string `json:"morning_checkin"`
 	NightCheckin   *string `json:"night_checkin"`
 	MuteUntil      *string `json:"mute_until"`
+	statArgs
 }
 
 func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (string, error) {
@@ -586,8 +613,14 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 		}
 	}
 	profile := p.Name.Valid || p.Timezone.Valid || p.WakeTime.Valid || p.Bedtime.Valid
-	if !profile && len(settings) == 0 {
+	stats := args.statArgs.given()
+	if !profile && !stats && len(settings) == 0 {
 		return "error: no fields given", nil
+	}
+	today := a.localDate(old)
+	sp := statsParams(old)
+	if errText := applyStats(&sp, args.statArgs, today); errText != "" {
+		return "error: " + errText, nil
 	}
 	if profile {
 		if _, err := c.q.UpdateProfile(ctx, p); err != nil {
@@ -596,6 +629,11 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 	}
 	if len(settings) > 0 {
 		if err := c.q.SetCheckins(ctx, checkins); err != nil {
+			return "", err
+		}
+	}
+	if stats {
+		if err := c.q.SetBodyStats(ctx, sp); err != nil {
 			return "", err
 		}
 	}
@@ -612,20 +650,34 @@ func (a *Agent) setProfile(ctx context.Context, c *call, args profileArgs) (stri
 	if p.Bedtime.Valid {
 		changed = append(changed, "bedtime to "+clock(micros(p.Bedtime), "3:04 PM"))
 	}
+	if stats {
+		changed = append(changed, "body stats")
+	}
 	c.undo = &undoRecord{
 		Op:      undoRestoreProfile,
 		Desc:    "setting your " + strings.Join(append(changed, settings...), ", "),
 		Profile: profileOf(old),
 	}
-	// A change that moves the check-ins says where they are now.
-	if len(settings) == 0 && !p.WakeTime.Valid && !p.Bedtime.Valid {
-		return "saved", nil
-	}
 	user, err := c.q.GetUser(ctx, c.userID)
 	if err != nil {
 		return "", err
 	}
-	return "saved. Now: " + a.checkinTimes(user) + ".", nil
+	targets := ""
+	if stats {
+		c.undo.Stats = statsOf(old)
+		res, _, err := a.updateTargets(ctx, c.q, user, today, targetOpts{reason: "profile", detail: "your stats changed"})
+		if err != nil {
+			return "", err
+		}
+		if res != nil {
+			c.undo.Targets, targets = &res.before, " "+res.text
+		}
+	}
+	// A change that moves the check-ins says where they are now.
+	if len(settings) == 0 && !p.WakeTime.Valid && !p.Bedtime.Valid {
+		return "saved" + targets, nil
+	}
+	return "saved. Now: " + a.checkinTimes(user) + "." + targets, nil
 }
 
 // checkinTimes shows when the check-ins go and any mute, like "morning

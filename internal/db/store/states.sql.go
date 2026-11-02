@@ -12,7 +12,7 @@ import (
 )
 
 const bodyStateHistory = `-- name: BodyStateHistory :many
-SELECT id, user_id, state, start_date, created_at, updated_at FROM body_states WHERE user_id = $1 ORDER BY start_date
+SELECT id, user_id, state, start_date, created_at, updated_at, tier, calorie_delta, protein_g, fat_g FROM body_states WHERE user_id = $1 ORDER BY start_date
 `
 
 // Every state row, oldest first, so a range of days can each be judged by
@@ -33,6 +33,10 @@ func (q *Queries) BodyStateHistory(ctx context.Context, userID int64) ([]BodySta
 			&i.StartDate,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Tier,
+			&i.CalorieDelta,
+			&i.ProteinG,
+			&i.FatG,
 		); err != nil {
 			return nil, err
 		}
@@ -45,7 +49,7 @@ func (q *Queries) BodyStateHistory(ctx context.Context, userID int64) ([]BodySta
 }
 
 const bodyStateOnDay = `-- name: BodyStateOnDay :one
-SELECT id, user_id, state, start_date, created_at, updated_at FROM body_states WHERE user_id = $1 AND start_date = $2
+SELECT id, user_id, state, start_date, created_at, updated_at, tier, calorie_delta, protein_g, fat_g FROM body_states WHERE user_id = $1 AND start_date = $2
 `
 
 type BodyStateOnDayParams struct {
@@ -64,6 +68,10 @@ func (q *Queries) BodyStateOnDay(ctx context.Context, arg BodyStateOnDayParams) 
 		&i.StartDate,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Tier,
+		&i.CalorieDelta,
+		&i.ProteinG,
+		&i.FatG,
 	)
 	return i, err
 }
@@ -83,19 +91,32 @@ func (q *Queries) DeleteBodyState(ctx context.Context, arg DeleteBodyStateParams
 }
 
 const setBodyState = `-- name: SetBodyState :exec
-INSERT INTO body_states (user_id, state, start_date)
-VALUES ($1, $2, $3)
+INSERT INTO body_states (user_id, state, start_date, tier, calorie_delta, protein_g, fat_g)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (user_id, start_date) DO UPDATE
-SET state = EXCLUDED.state, updated_at = now()
+SET state = EXCLUDED.state, tier = EXCLUDED.tier, calorie_delta = EXCLUDED.calorie_delta,
+    protein_g = EXCLUDED.protein_g, fat_g = EXCLUDED.fat_g, updated_at = now()
 `
 
 type SetBodyStateParams struct {
-	UserID    int64       `json:"user_id"`
-	State     string      `json:"state"`
-	StartDate pgtype.Date `json:"start_date"`
+	UserID       int64       `json:"user_id"`
+	State        string      `json:"state"`
+	StartDate    pgtype.Date `json:"start_date"`
+	Tier         pgtype.Text `json:"tier"`
+	CalorieDelta pgtype.Int4 `json:"calorie_delta"`
+	ProteinG     pgtype.Int4 `json:"protein_g"`
+	FatG         pgtype.Int4 `json:"fat_g"`
 }
 
 func (q *Queries) SetBodyState(ctx context.Context, arg SetBodyStateParams) error {
-	_, err := q.db.Exec(ctx, setBodyState, arg.UserID, arg.State, arg.StartDate)
+	_, err := q.db.Exec(ctx, setBodyState,
+		arg.UserID,
+		arg.State,
+		arg.StartDate,
+		arg.Tier,
+		arg.CalorieDelta,
+		arg.ProteinG,
+		arg.FatG,
+	)
 	return err
 }

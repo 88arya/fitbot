@@ -92,6 +92,10 @@ type undoRecord struct {
 	// no row. For a state, Value is what the row on Day held.
 	Setting string  `json:"setting,omitempty"`
 	Value   *string `json:"value,omitempty"`
+	// Targets reverses any change to the state or targets the action made,
+	// and Stats are the body stats before set_profile.
+	Targets *targetsBefore `json:"targets,omitempty"`
+	Stats   *statsState    `json:"stats,omitempty"`
 }
 
 // profileState is the profile fields set_profile changes, as they were.
@@ -222,6 +226,16 @@ func (a *Agent) undo(ctx context.Context, userID, msgID int64) (string, error) {
 		if err := a.applyUndo(ctx, q, userID, rec); err != nil {
 			return fmt.Errorf("undoing action %d: %w", act.ID, err)
 		}
+		if rec.Stats != nil {
+			if err := restoreStats(ctx, q, userID, rec.Stats); err != nil {
+				return fmt.Errorf("undoing action %d: %w", act.ID, err)
+			}
+		}
+		if rec.Targets != nil {
+			if err := a.restoreTargets(ctx, q, userID, rec.Targets); err != nil {
+				return fmt.Errorf("undoing action %d: %w", act.ID, err)
+			}
+		}
 		if err := q.MarkUndone(ctx, store.MarkUndoneParams{ID: act.ID, MessageID: by}); err != nil {
 			return err
 		}
@@ -258,17 +272,7 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		if err != nil {
 			return err
 		}
-		for _, g := range rec.Goals {
-			if !g.Existed {
-				err = q.DeleteGoal(ctx, store.DeleteGoalParams{UserID: userID, Metric: g.Metric, StartDate: day})
-			} else {
-				err = q.SetGoal(ctx, store.SetGoalParams{UserID: userID, Metric: g.Metric, Value: int4(g.Value), StartDate: day})
-			}
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return restoreGoals(ctx, q, userID, day, rec.Goals)
 	case undoDeleteIntake:
 		at := pgtype.Timestamptz{Time: a.now(), Valid: true}
 		for _, id := range rec.IDs {
@@ -407,6 +411,10 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		return q.SetSetting(ctx, store.SetSettingParams{Key: rec.Setting, Value: *rec.Value,
 			UpdatedBy: pgtype.Int8{Int64: userID, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: a.now(), Valid: true}})
 	case undoRestoreState:
+		// restoreTargets does this for a change made since targets.
+		if rec.Targets != nil {
+			return nil
+		}
 		day, err := parseDay(rec.Day)
 		if err != nil {
 			return err
@@ -417,6 +425,22 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		return q.SetBodyState(ctx, store.SetBodyStateParams{UserID: userID, State: *rec.Value, StartDate: day})
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
+}
+
+// restoreGoals puts goal rows on day back as they were.
+func restoreGoals(ctx context.Context, q *store.Queries, userID int64, day pgtype.Date, goals []goalBefore) error {
+	for _, g := range goals {
+		var err error
+		if !g.Existed {
+			err = q.DeleteGoal(ctx, store.DeleteGoalParams{UserID: userID, Metric: g.Metric, StartDate: day})
+		} else {
+			err = q.SetGoal(ctx, store.SetGoalParams{UserID: userID, Metric: g.Metric, Value: int4(g.Value), StartDate: day})
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // undoReply says what was undone and, for logged amounts, nights,
@@ -447,7 +471,8 @@ func (a *Agent) undoReply(ctx context.Context, q *store.Queries, userID int64, a
 		if len(states) == 0 {
 			return reply, nil
 		}
-		return reply + " State: " + states[len(states)-1].State + ".", nil
+		last := states[len(states)-1]
+		return reply + " State: " + planName(last.State, last.Tier) + ".", nil
 	}
 	if rec.Op == undoRestoreSchedule || rec.Op == undoRestorePlans {
 		status, err := a.trainingUndoReply(ctx, q, userID, rec)

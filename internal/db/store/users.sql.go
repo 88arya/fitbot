@@ -12,7 +12,7 @@ import (
 )
 
 const getUser = `-- name: GetUser :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE id = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until, height_mm, age, age_on, sex, activity FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -31,12 +31,17 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.MorningCheckin,
 		&i.NightCheckin,
 		&i.MutedUntil,
+		&i.HeightMm,
+		&i.Age,
+		&i.AgeOn,
+		&i.Sex,
+		&i.Activity,
 	)
 	return i, err
 }
 
 const getUserByPhone = `-- name: GetUserByPhone :one
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE phone = $1
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until, height_mm, age, age_on, sex, activity FROM users WHERE phone = $1
 `
 
 func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error) {
@@ -55,12 +60,17 @@ func (q *Queries) GetUserByPhone(ctx context.Context, phone string) (User, error
 		&i.MorningCheckin,
 		&i.NightCheckin,
 		&i.MutedUntil,
+		&i.HeightMm,
+		&i.Age,
+		&i.AgeOn,
+		&i.Sex,
+		&i.Activity,
 	)
 	return i, err
 }
 
 const listUsersWithTimezone = `-- name: ListUsersWithTimezone :many
-SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until FROM users WHERE timezone IS NOT NULL ORDER BY id
+SELECT id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until, height_mm, age, age_on, sex, activity FROM users WHERE timezone IS NOT NULL ORDER BY id
 `
 
 // Users whose local time is known, so scheduled texts can be timed for them.
@@ -86,6 +96,11 @@ func (q *Queries) ListUsersWithTimezone(ctx context.Context) ([]User, error) {
 			&i.MorningCheckin,
 			&i.NightCheckin,
 			&i.MutedUntil,
+			&i.HeightMm,
+			&i.Age,
+			&i.AgeOn,
+			&i.Sex,
+			&i.Activity,
 		); err != nil {
 			return nil, err
 		}
@@ -146,6 +161,38 @@ func (q *Queries) RestoreProfile(ctx context.Context, arg RestoreProfileParams) 
 	return err
 }
 
+const setBodyStats = `-- name: SetBodyStats :exec
+UPDATE users
+SET height_mm = $1,
+    age = $2,
+    age_on = $3,
+    sex = $4,
+    activity = $5
+WHERE id = $6
+`
+
+type SetBodyStatsParams struct {
+	HeightMm pgtype.Int4 `json:"height_mm"`
+	Age      pgtype.Int4 `json:"age"`
+	AgeOn    pgtype.Date `json:"age_on"`
+	Sex      pgtype.Text `json:"sex"`
+	Activity pgtype.Text `json:"activity"`
+	ID       int64       `json:"id"`
+}
+
+// Sets the fields the calorie estimate uses exactly, NULLs included.
+func (q *Queries) SetBodyStats(ctx context.Context, arg SetBodyStatsParams) error {
+	_, err := q.db.Exec(ctx, setBodyStats,
+		arg.HeightMm,
+		arg.Age,
+		arg.AgeOn,
+		arg.Sex,
+		arg.Activity,
+		arg.ID,
+	)
+	return err
+}
+
 const setCheckins = `-- name: SetCheckins :exec
 UPDATE users
 SET morning_checkin = $1,
@@ -180,7 +227,7 @@ SET name = COALESCE($2, name),
     bedtime = COALESCE($5, bedtime),
     monthly_budget_usd = COALESCE($6, monthly_budget_usd)
 WHERE id = $1
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until, height_mm, age, age_on, sex, activity
 `
 
 type UpdateProfileParams struct {
@@ -216,6 +263,11 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 		&i.MorningCheckin,
 		&i.NightCheckin,
 		&i.MutedUntil,
+		&i.HeightMm,
+		&i.Age,
+		&i.AgeOn,
+		&i.Sex,
+		&i.Activity,
 	)
 	return i, err
 }
@@ -223,7 +275,7 @@ func (q *Queries) UpdateProfile(ctx context.Context, arg UpdateProfileParams) (U
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (phone) VALUES ($1)
 ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
-RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until
+RETURNING id, phone, timezone, created_at, name, monthly_budget_usd, wake_time, bedtime, supplements_answered, morning_checkin, night_checkin, muted_until, height_mm, age, age_on, sex, activity
 `
 
 func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
@@ -242,6 +294,11 @@ func (q *Queries) UpsertUser(ctx context.Context, phone string) (User, error) {
 		&i.MorningCheckin,
 		&i.NightCheckin,
 		&i.MutedUntil,
+		&i.HeightMm,
+		&i.Age,
+		&i.AgeOn,
+		&i.Sex,
+		&i.Activity,
 	)
 	return i, err
 }

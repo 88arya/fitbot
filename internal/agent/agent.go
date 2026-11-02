@@ -198,8 +198,21 @@ func (a *Agent) setupState(ctx context.Context, userID int64) (setupState, error
 		return setupState{}, fmt.Errorf("loading state: %w", err)
 	}
 	if len(states) > 0 {
-		s.state = states[len(states)-1].State
+		last := states[len(states)-1]
+		s.state = last.State
+		s.manual = isManual(last)
+		_, s.hasRate = dailyDelta(last)
 	}
+	_, err = a.Store.LastWeight(ctx, userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return setupState{}, fmt.Errorf("loading weight: %w", err)
+	}
+	s.weighed = err == nil
+	_, err = a.Store.LatestTargetChange(ctx, userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return setupState{}, fmt.Errorf("loading targets: %w", err)
+	}
+	s.hasTargets = err == nil
 	return s, nil
 }
 
@@ -371,11 +384,12 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 			labels = append(labels, f.label)
 		}
 		fmt.Fprintf(&b, "\nSetup is in progress. Still missing: %s. If the conversation gives any of these, save them "+
-			"with set_profile, set_state, set_goals, set_schedule, or set_supplement. Convert a city or region to its IANA timezone. If the user isn't sure "+
-			"whether to bulk, maintain, or cut, save maintain. If the user says \"none\" "+
+			"with set_profile, set_state, log_weight, set_goals, set_schedule, or set_supplement. Convert a city or region to its IANA timezone. If the user isn't sure "+
+			"whether to bulk, maintain, or cut, save maintain, and if they aren't sure of a rate, use moderate for a cut or standard for a bulk, and light activity if they aren't "+
+			"sure of that. If they'd rather set their own goals, save set_state with tier manual. If the user says \"none\" "+
 			"or doesn't want to track a goal, save it with value null, a schedule with kind null, or supplements with action none. If they don't know their wake time or bedtime, "+
 			"save the default: wake time %s, bedtime %s. Do not ask for missing fields yourself: the next setup question is added after your reply. "+
-			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\"\n",
+			"If the user only answered a setup question, reply with a brief acknowledgement like \"Got it.\", plus the targets from the tool result if it gives any.\n",
 			strings.Join(labels, "; "), a.settings()[settingWake], a.settings()[settingBedtime])
 	}
 	b.WriteString("The user can change any field later, like \"I moved to Vancouver\"; save changes with set_profile. " +

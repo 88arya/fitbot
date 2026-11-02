@@ -44,6 +44,16 @@ SET morning_checkin = sqlc.narg(morning_checkin),
     muted_until = sqlc.narg(muted_until)
 WHERE id = @id;
 
+-- name: SetBodyStats :exec
+-- Sets the fields the calorie estimate uses exactly, NULLs included.
+UPDATE users
+SET height_mm = sqlc.narg(height_mm),
+    age = sqlc.narg(age),
+    age_on = sqlc.narg(age_on),
+    sex = sqlc.narg(sex),
+    activity = sqlc.narg(activity)
+WHERE id = @id;
+
 -- name: LockUser :one
 -- Makes changes to one user's data that must not interleave take turns.
 SELECT id FROM users WHERE id = $1 FOR UPDATE;

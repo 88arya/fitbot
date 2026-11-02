@@ -41,6 +41,7 @@ const (
 	settingSupplements = "supplement_reminders"
 	settingWeekly      = "weekly_summary"
 	settingStateChange = "state_weekly_change"
+	settingReview      = "target_review"
 )
 
 // resetValue is the value that puts a setting back to its default.
@@ -73,6 +74,7 @@ var settingDefs = []settingDef{
 	{settingSupplements, "supplement reminders", "on or off; a re-ping needs these on", parseToggle},
 	{settingWeekly, "weekly summary", "on or off", parseToggle},
 	{settingStateChange, "state weekly change", "lbs a week beyond which a user counts as gaining or losing, 0.1 to 5", parseStateChange},
+	{settingReview, "weekly target review", "on or off; off stops automatic calorie changes", parseToggle},
 }
 
 func settingByKey(key string) (settingDef, bool) {
@@ -245,6 +247,7 @@ func (a *Agent) defaults() settingValues {
 		settingSupplements: "on",
 		settingWeekly:      "on",
 		settingStateChange: "0.5",
+		settingReview:      "on",
 	}
 	if a.LLM != nil {
 		input, output := a.LLM.Prices()

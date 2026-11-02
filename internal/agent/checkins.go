@@ -263,7 +263,7 @@ type checkins struct{ a *Agent }
 
 // Checkins is what the scheduler sends for the agent: the morning and night
 // check-ins, gym reminders and follow-ups, supplement reminders, water
-// nudges, and the weekly summary.
+// nudges, the weekly summary, and the weekly target review.
 func (a *Agent) Checkins() scheduler.Checkins {
 	return checkins{a}
 }
@@ -283,6 +283,14 @@ func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]sch
 	// check-in, which a short reply then answers.
 	if weeklyDue(day) && v.on(settingWeekly) {
 		out = append(out, scheduler.Due{Kind: kindWeekly, At: d.morning})
+	}
+	if weeklyDue(day) && v.on(settingReview) {
+		switch _, err := c.a.Store.LatestTargetChange(ctx, u.ID); {
+		case err == nil:
+			out = append(out, scheduler.Due{Kind: kindReview, At: d.morning})
+		case !errors.Is(err, pgx.ErrNoRows):
+			return nil, err
+		}
 	}
 	if v.on(settingMorning) {
 		out = append(out, scheduler.Due{Kind: kindMorning, At: d.morning})
@@ -364,6 +372,9 @@ func (c checkins) Text(ctx context.Context, u store.User, day pgtype.Date, kind,
 		return scheduler.Text{Body: c.a.waterText(d, slot)}, nil
 	case kindWeekly:
 		body, err := c.a.weeklyText(ctx, u, day)
+		return scheduler.Text{Body: body}, err
+	case kindReview:
+		body, err := c.a.reviewText(ctx, u, day)
 		return scheduler.Text{Body: body}, err
 	}
 	return scheduler.Text{}, fmt.Errorf("unknown kind %q", kind)

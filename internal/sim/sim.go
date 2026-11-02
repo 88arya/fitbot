@@ -43,8 +43,9 @@ type Sim struct {
 	// Scheduler sends Checkins on the simulated clock.
 	Scheduler *scheduler.Scheduler
 	// UserID is the simulated user, set up with name Sam, the start time's
-	// timezone, waking at 8:00 and in bed at 22:00, no goals tracked, and no
-	// training schedule, so setup is already done. ResetSetup undoes this.
+	// timezone, waking at 8:00 and in bed at 22:00, setting their own goals
+	// with none tracked, and no training schedule, so setup is already done.
+	// ResetSetup undoes this.
 	UserID int64
 
 	handler http.Handler
@@ -127,7 +128,7 @@ func New(t *testing.T, start time.Time) *Sim {
 		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO body_states (user_id, state, start_date) VALUES ($1, 'bulk', $2)`,
+	if _, err := pool.Exec(ctx, `INSERT INTO body_states (user_id, state, start_date, tier) VALUES ($1, 'bulk', $2, 'manual')`,
 		s.UserID, start.Format(time.DateOnly)); err != nil {
 		t.Fatal(err)
 	}

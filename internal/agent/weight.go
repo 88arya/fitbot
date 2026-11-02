@@ -65,7 +65,21 @@ func (a *Agent) logWeight(ctx context.Context, c *call, args weightArgs) (string
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("logged #%d: %s %s. %s", row.ID, summary, dayWord(day, today), st.forModel()), nil
+	result := fmt.Sprintf("logged #%d: %s %s. %s", row.ID, summary, dayWord(day, today), st.forModel())
+	// Targets may have been waiting on a weigh-in.
+	if _, err := c.q.LatestTargetChange(ctx, c.userID); errors.Is(err, pgx.ErrNoRows) {
+		res, _, err := a.updateTargets(ctx, c.q, user, today, targetOpts{reason: "plan", detail: "your first weigh-in"})
+		if err != nil {
+			return "", err
+		}
+		if res != nil {
+			c.undo.Targets = &res.before
+			result += " " + res.text
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return result, nil
 }
 
 // weightGrams converts a weight in unit, lbs when nil, to grams and checks

@@ -23,12 +23,16 @@ type Action struct {
 }
 
 type BodyState struct {
-	ID        int64              `json:"id"`
-	UserID    int64              `json:"user_id"`
-	State     string             `json:"state"`
-	StartDate pgtype.Date        `json:"start_date"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID           int64              `json:"id"`
+	UserID       int64              `json:"user_id"`
+	State        string             `json:"state"`
+	StartDate    pgtype.Date        `json:"start_date"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	Tier         pgtype.Text        `json:"tier"`
+	CalorieDelta pgtype.Int4        `json:"calorie_delta"`
+	ProteinG     pgtype.Int4        `json:"protein_g"`
+	FatG         pgtype.Int4        `json:"fat_g"`
 }
 
 type Delivery struct {
@@ -177,6 +181,35 @@ type SupplementPlan struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type TargetChange struct {
+	ID           int64              `json:"id"`
+	UserID       int64              `json:"user_id"`
+	LocalDate    pgtype.Date        `json:"local_date"`
+	Reason       string             `json:"reason"`
+	Detail       string             `json:"detail"`
+	State        string             `json:"state"`
+	Tier         pgtype.Text        `json:"tier"`
+	CalorieDelta int32              `json:"calorie_delta"`
+	Bmr          int32              `json:"bmr"`
+	Tdee         int32              `json:"tdee"`
+	Adjustment   int32              `json:"adjustment"`
+	Calories     int32              `json:"calories"`
+	Protein      int32              `json:"protein"`
+	Carbs        int32              `json:"carbs"`
+	Fat          int32              `json:"fat"`
+	WeightGrams  int32              `json:"weight_grams"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type TargetReview struct {
+	UserID    int64              `json:"user_id"`
+	WeekStart pgtype.Date        `json:"week_start"`
+	Outcome   string             `json:"outcome"`
+	Body      string             `json:"body"`
+	ChangeID  pgtype.Int8        `json:"change_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type TrainingSchedule struct {
 	ID           int64              `json:"id"`
 	UserID       int64              `json:"user_id"`
@@ -201,6 +234,11 @@ type User struct {
 	MorningCheckin      pgtype.Time        `json:"morning_checkin"`
 	NightCheckin        pgtype.Time        `json:"night_checkin"`
 	MutedUntil          pgtype.Timestamptz `json:"muted_until"`
+	HeightMm            pgtype.Int4        `json:"height_mm"`
+	Age                 pgtype.Int4        `json:"age"`
+	AgeOn               pgtype.Date        `json:"age_on"`
+	Sex                 pgtype.Text        `json:"sex"`
+	Activity            pgtype.Text        `json:"activity"`
 }
 
 type WeightLog struct {
