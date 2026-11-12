@@ -70,6 +70,14 @@ func (a *Agent) logIntake(ctx context.Context, c *call, args intakeArgs) (string
 			return "error: " + errText, nil
 		}
 	}
+	return a.insertIntake(ctx, c, user, day, given, nil)
+}
+
+// insertIntake adds the given amounts, in canonical units, to day's totals,
+// skipping any metric the user doesn't track, and returns the result for
+// the model. food is the saved food they come from, if any.
+func (a *Agent) insertIntake(ctx context.Context, c *call, user store.User, day pgtype.Date, given map[string]*float64,
+	food *store.SavedFood) (string, error) {
 	tracked, err := trackedMetrics(ctx, c.q, c.userID)
 	if err != nil {
 		return "", err
@@ -113,13 +121,14 @@ func (a *Agent) logIntake(ctx context.Context, c *call, args intakeArgs) (string
 	var summaries, logged []string
 	for _, e := range entries {
 		row, err := c.q.InsertIntake(ctx, store.InsertIntakeParams{
-			UserID:    c.userID,
-			ActionID:  c.actionID,
-			MessageID: c.msgID,
-			LocalDate: day,
-			Metric:    e.m.name,
-			Amount:    e.amount,
-			LoggedAt:  pgtype.Timestamptz{Time: a.now(), Valid: true},
+			UserID:      c.userID,
+			ActionID:    c.actionID,
+			MessageID:   c.msgID,
+			LocalDate:   day,
+			Metric:      e.m.name,
+			Amount:      e.amount,
+			LoggedAt:    pgtype.Timestamptz{Time: a.now(), Valid: true},
+			SavedFoodID: foodID(food),
 		})
 		if err != nil {
 			return "", err
@@ -130,13 +139,18 @@ func (a *Agent) logIntake(ctx context.Context, c *call, args intakeArgs) (string
 		logged = append(logged, fmt.Sprintf("%s (#%d)", intakeSummary(e.m, e.amount), row.ID))
 	}
 	undo.Desc = "logging " + strings.Join(summaries, " and ")
+	what := strings.Join(logged, ", ")
+	if food != nil {
+		undo.Desc = fmt.Sprintf("logging %s (%s)", food.Name, strings.Join(summaries, " and "))
+		what = food.Name + ": " + what
+	}
 	c.undo = undo
 
 	st, err := a.dayStatus(ctx, c.q, user, day)
 	if err != nil {
 		return "", err
 	}
-	result := fmt.Sprintf("logged %s %s. %s", strings.Join(logged, ", "), dayWord(day, today), st.forModel())
+	result := fmt.Sprintf("logged %s %s. %s", what, dayWord(day, a.localDate(user)), st.forModel())
 	if len(skipped) > 0 {
 		result += fmt.Sprintf(" Not logged: %s, because the user doesn't track %s. They can start by setting a goal for %s.",
 			strings.Join(skipped, " and "), it, it)
@@ -509,7 +523,7 @@ func (a *Agent) intakeSection(ctx context.Context, user store.User) (string, err
 	loc := a.location(user)
 	for _, l := range logs {
 		m, _ := metricByName(l.Metric)
-		fmt.Fprintf(&b, "#%d at %s: %s\n", l.ID, l.LoggedAt.Time.In(loc).Format("3:04 PM"), intakeSummary(m, l.Amount))
+		fmt.Fprintf(&b, "#%d at %s: %s\n", l.ID, l.LoggedAt.Time.In(loc).Format("3:04 PM"), logEntry(m, l))
 	}
 	b.WriteString("Totals: " + st.forModel() + "\n")
 	b.WriteString("Add what the user ate and drank to today's totals with log_intake, using only the amounts they gave: " +

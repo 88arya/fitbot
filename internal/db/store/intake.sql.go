@@ -12,7 +12,7 @@ import (
 )
 
 const getIntake = `-- name: GetIntake :one
-SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at FROM intake_logs
+SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at, saved_food_id FROM intake_logs
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -37,24 +37,26 @@ func (q *Queries) GetIntake(ctx context.Context, arg GetIntakeParams) (IntakeLog
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SavedFoodID,
 	)
 	return i, err
 }
 
 const insertIntake = `-- name: InsertIntake :one
-INSERT INTO intake_logs (user_id, action_id, message_id, local_date, metric, amount, logged_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at
+INSERT INTO intake_logs (user_id, action_id, message_id, local_date, metric, amount, logged_at, saved_food_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at, saved_food_id
 `
 
 type InsertIntakeParams struct {
-	UserID    int64              `json:"user_id"`
-	ActionID  int64              `json:"action_id"`
-	MessageID int64              `json:"message_id"`
-	LocalDate pgtype.Date        `json:"local_date"`
-	Metric    string             `json:"metric"`
-	Amount    int32              `json:"amount"`
-	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
+	UserID      int64              `json:"user_id"`
+	ActionID    int64              `json:"action_id"`
+	MessageID   int64              `json:"message_id"`
+	LocalDate   pgtype.Date        `json:"local_date"`
+	Metric      string             `json:"metric"`
+	Amount      int32              `json:"amount"`
+	LoggedAt    pgtype.Timestamptz `json:"logged_at"`
+	SavedFoodID pgtype.Int8        `json:"saved_food_id"`
 }
 
 func (q *Queries) InsertIntake(ctx context.Context, arg InsertIntakeParams) (IntakeLog, error) {
@@ -66,6 +68,7 @@ func (q *Queries) InsertIntake(ctx context.Context, arg InsertIntakeParams) (Int
 		arg.Metric,
 		arg.Amount,
 		arg.LoggedAt,
+		arg.SavedFoodID,
 	)
 	var i IntakeLog
 	err := row.Scan(
@@ -80,6 +83,7 @@ func (q *Queries) InsertIntake(ctx context.Context, arg InsertIntakeParams) (Int
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SavedFoodID,
 	)
 	return i, err
 }
@@ -132,9 +136,11 @@ func (q *Queries) IntakeDaily(ctx context.Context, arg IntakeDailyParams) ([]Int
 }
 
 const intakeOn = `-- name: IntakeOn :many
-SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at FROM intake_logs
-WHERE user_id = $1 AND local_date = $2 AND deleted_at IS NULL
-ORDER BY logged_at, id
+SELECT l.id, l.metric, l.amount, l.logged_at, f.name AS food
+FROM intake_logs l
+LEFT JOIN saved_foods f ON f.id = l.saved_food_id
+WHERE l.user_id = $1 AND l.local_date = $2 AND l.deleted_at IS NULL
+ORDER BY l.logged_at, l.id
 `
 
 type IntakeOnParams struct {
@@ -142,27 +148,31 @@ type IntakeOnParams struct {
 	Day    pgtype.Date `json:"day"`
 }
 
-func (q *Queries) IntakeOn(ctx context.Context, arg IntakeOnParams) ([]IntakeLog, error) {
+type IntakeOnRow struct {
+	ID       int64              `json:"id"`
+	Metric   string             `json:"metric"`
+	Amount   int32              `json:"amount"`
+	LoggedAt pgtype.Timestamptz `json:"logged_at"`
+	Food     pgtype.Text        `json:"food"`
+}
+
+// A local day's amounts, with the name of the saved food each was logged
+// from, if any.
+func (q *Queries) IntakeOn(ctx context.Context, arg IntakeOnParams) ([]IntakeOnRow, error) {
 	rows, err := q.db.Query(ctx, intakeOn, arg.UserID, arg.Day)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []IntakeLog{}
+	items := []IntakeOnRow{}
 	for rows.Next() {
-		var i IntakeLog
+		var i IntakeOnRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.UserID,
-			&i.ActionID,
-			&i.MessageID,
-			&i.LocalDate,
 			&i.Metric,
 			&i.Amount,
 			&i.LoggedAt,
-			&i.DeletedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Food,
 		); err != nil {
 			return nil, err
 		}
@@ -213,7 +223,7 @@ func (q *Queries) IntakeTotals(ctx context.Context, arg IntakeTotalsParams) ([]I
 }
 
 const lastIntake = `-- name: LastIntake :one
-SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at FROM intake_logs
+SELECT id, user_id, action_id, message_id, local_date, metric, amount, logged_at, deleted_at, created_at, updated_at, saved_food_id FROM intake_logs
 WHERE user_id = $1 AND metric = $2 AND deleted_at IS NULL
 ORDER BY id DESC
 LIMIT 1
@@ -241,6 +251,7 @@ func (q *Queries) LastIntake(ctx context.Context, arg LastIntakeParams) (IntakeL
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SavedFoodID,
 	)
 	return i, err
 }

@@ -826,7 +826,7 @@ func (a *Agent) getDay(ctx context.Context, c *call, args dayArgs) (string, erro
 	var entries []string
 	for _, l := range logs {
 		m, _ := metricByName(l.Metric)
-		entries = append(entries, fmt.Sprintf("#%d at %s: %s", l.ID, l.LoggedAt.Time.In(loc).Format("3:04 PM"), intakeSummary(m, l.Amount)))
+		entries = append(entries, fmt.Sprintf("#%d at %s: %s", l.ID, l.LoggedAt.Time.In(loc).Format("3:04 PM"), logEntry(m, l)))
 	}
 	if len(entries) == 0 {
 		entries = []string{"none"}

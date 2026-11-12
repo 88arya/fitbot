@@ -150,6 +150,40 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name:        "log_food",
+			Description: "Log a food or drink the user saved, by its name in Saved foods, adding its saved amounts to the day's totals.",
+			Parameters: object(map[string]any{
+				"name": map[string]any{"type": "string", "description": "The saved name, as listed in Saved foods."},
+				"servings": map[string]any{"type": []string{"number", "null"},
+					"description": "How many servings the user had, like 2 or 0.5, if they said; null for one."},
+				"date": map[string]any{"type": []string{"string", "null"},
+					"description": "The user's local day it counts toward, YYYY-MM-DD, when they name one like \"yesterday\". null for today."},
+			}),
+		},
+		run: handle((*Agent).logFood),
+	},
+	{
+		spec: llm.Tool{
+			Name: "save_food",
+			Description: "Save a food or drink by name with its amounts, so the user can log it again by naming it; or remove one. " +
+				"Saving a name that exists replaces it. Use only amounts the user gave, or ones they just logged.",
+			Parameters: object(map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"set", "remove"}},
+				"name": map[string]any{"type": "string",
+					"description": "Short lowercase name the user will text, like \"usual breakfast\", \"protein shake\", or \"bottle\"."},
+				"calories": map[string]any{"type": []string{"number", "null"}, "description": "set only: calories (kcal), or null."},
+				"protein":  map[string]any{"type": []string{"number", "null"}, "description": "set only: grams of protein, or null."},
+				"carbs":    map[string]any{"type": []string{"number", "null"}, "description": "set only: grams of carbs, or null."},
+				"fat":      map[string]any{"type": []string{"number", "null"}, "description": "set only: grams of fat, or null."},
+				"water":    map[string]any{"type": []string{"number", "null"}, "description": "set only: water in water_unit, or null."},
+				"water_unit": map[string]any{"type": []string{"string", "null"}, "enum": []any{"ml", "l", "oz", nil},
+					"description": "The unit the user gave water in; null for ml."},
+			}),
+		},
+		run: handle((*Agent).saveFood),
+	},
+	{
+		spec: llm.Tool{
 			Name: "log_sleep",
 			Description: "Log a night of sleep, using only what the user said. Give hours, or bedtime and wake_time, or all three; " +
 				"with only the two times, the hours are worked out from them. Never estimate.",

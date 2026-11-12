@@ -599,6 +599,12 @@ func replyWord(body string) (yes, ok bool) {
 	return false, false
 }
 
+// isReplyWord reports whether body is a short yes or no reply.
+func isReplyWord(body string) bool {
+	_, ok := replyWord(body)
+	return ok
+}
+
 // checkinReply answers a short yes or no reply to the scheduled text just
 // before it, when that text asked about one thing: "yes" to "Did you make
 // it to the gym?" logs the sessions done, and "done" to a supplement

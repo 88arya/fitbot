@@ -134,6 +134,10 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
+		foods, err := a.savedFoodSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
 		sleep, err := a.sleepSection(ctx, state.user)
 		if err != nil {
 			return "", err
@@ -162,7 +166,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+sleep+training+workouts+supplements+weight+body+settings)}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+foods+sleep+training+workouts+supplements+weight+body+settings)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
@@ -283,6 +287,15 @@ func (a *Agent) fastPath(ctx context.Context, userID int64, in store.Message, in
 			return "", true, fmt.Errorf("logging water: %w", err)
 		}
 		return reply, true, nil
+	}
+	if !inSetup {
+		reply, ok, err := a.logSavedFood(ctx, userID, in)
+		if err != nil {
+			return "", true, fmt.Errorf("logging saved food: %w", err)
+		}
+		if ok {
+			return reply, true, nil
+		}
 	}
 	return "", false, nil
 }

@@ -1,6 +1,6 @@
 -- name: InsertIntake :one
-INSERT INTO intake_logs (user_id, action_id, message_id, local_date, metric, amount, logged_at)
-VALUES (@user_id, @action_id, @message_id, @local_date, @metric, @amount, @logged_at)
+INSERT INTO intake_logs (user_id, action_id, message_id, local_date, metric, amount, logged_at, saved_food_id)
+VALUES (@user_id, @action_id, @message_id, @local_date, @metric, @amount, @logged_at, sqlc.narg(saved_food_id))
 RETURNING *;
 
 -- name: GetIntake :one
@@ -26,9 +26,13 @@ UPDATE intake_logs SET deleted_at = sqlc.narg(deleted_at), updated_at = now()
 WHERE id = @id AND user_id = @user_id;
 
 -- name: IntakeOn :many
-SELECT * FROM intake_logs
-WHERE user_id = @user_id AND local_date = @day AND deleted_at IS NULL
-ORDER BY logged_at, id;
+-- A local day's amounts, with the name of the saved food each was logged
+-- from, if any.
+SELECT l.id, l.metric, l.amount, l.logged_at, f.name AS food
+FROM intake_logs l
+LEFT JOIN saved_foods f ON f.id = l.saved_food_id
+WHERE l.user_id = @user_id AND l.local_date = @day AND l.deleted_at IS NULL
+ORDER BY l.logged_at, l.id;
 
 -- name: IntakeTotals :many
 -- A local day's total for each metric with anything logged.

@@ -63,17 +63,18 @@ type Goal struct {
 }
 
 type IntakeLog struct {
-	ID        int64              `json:"id"`
-	UserID    int64              `json:"user_id"`
-	ActionID  int64              `json:"action_id"`
-	MessageID int64              `json:"message_id"`
-	LocalDate pgtype.Date        `json:"local_date"`
-	Metric    string             `json:"metric"`
-	Amount    int32              `json:"amount"`
-	LoggedAt  pgtype.Timestamptz `json:"logged_at"`
-	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID          int64              `json:"id"`
+	UserID      int64              `json:"user_id"`
+	ActionID    int64              `json:"action_id"`
+	MessageID   int64              `json:"message_id"`
+	LocalDate   pgtype.Date        `json:"local_date"`
+	Metric      string             `json:"metric"`
+	Amount      int32              `json:"amount"`
+	LoggedAt    pgtype.Timestamptz `json:"logged_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	SavedFoodID pgtype.Int8        `json:"saved_food_id"`
 }
 
 type LlmCall struct {
@@ -107,6 +108,19 @@ type Message struct {
 	CostUsd    pgtype.Numeric     `json:"cost_usd"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SavedFood struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	Name      string             `json:"name"`
+	Calories  pgtype.Int4        `json:"calories"`
+	Protein   pgtype.Int4        `json:"protein"`
+	Carbs     pgtype.Int4        `json:"carbs"`
+	Fat       pgtype.Int4        `json:"fat"`
+	Water     pgtype.Int4        `json:"water"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type ScheduleDay struct {
