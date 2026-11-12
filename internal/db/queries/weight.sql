@@ -39,3 +39,10 @@ SELECT * FROM weight_logs
 WHERE user_id = @user_id AND local_date <= @day AND deleted_at IS NULL
 ORDER BY local_date DESC, logged_at, id
 LIMIT 1;
+
+-- name: FirstWeightSince :one
+-- The first weigh-in on or after local day first.
+SELECT * FROM weight_logs
+WHERE user_id = @user_id AND local_date >= @first AND deleted_at IS NULL
+ORDER BY local_date, logged_at, id
+LIMIT 1;

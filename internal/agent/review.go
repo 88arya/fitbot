@@ -144,6 +144,20 @@ func (a *Agent) runReview(ctx context.Context, q *store.Queries, user store.User
 	if err != nil {
 		return "", err
 	}
+	// A cut or bulk that got to the target weight is done: the review says
+	// so and changes nothing, since going past it isn't what the plan is for.
+	o, hasOutlook, err := loadOutlook(ctx, q, user.ID, sunday)
+	if err != nil {
+		return "", err
+	}
+	if hasOutlook && row.State != stateMaintain && recent.days >= reviewWeighIns && o.reached() {
+		body := fmt.Sprintf("You've reached your %s target: your average weight last week was %s. Want to hold it there? "+
+			"Reply \"maintain\" and I'll set your calories to maintenance, or tell me a new target.", lbs(recent.target), lbs(recent.avg))
+		if err := q.InsertTargetReview(ctx, store.InsertTargetReviewParams{UserID: user.ID, WeekStart: week, Outcome: "reached", Body: body}); err != nil {
+			return "", err
+		}
+		return body, nil
+	}
 	earlier, err := loadWeightTrend(ctx, q, user.ID, addDays(sunday, -7))
 	if err != nil {
 		return "", err

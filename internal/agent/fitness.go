@@ -527,9 +527,13 @@ func (a *Agent) planStatus(ctx context.Context, q *store.Queries, user store.Use
 	if !ok {
 		return "No state chosen yet.", nil
 	}
+	outlook, err := a.outlookFor(ctx, q, user.ID, today)
+	if err != nil {
+		return "", err
+	}
 	if isManual(row) {
-		return "The user sets their own goals (the manual tier), so there are no worked-out targets or weekly reviews. " +
-			"Offer to work them out if they ask, with set_state and a rate.", nil
+		return strings.TrimSpace("The user sets their own goals (the manual tier), so there are no worked-out targets or weekly reviews. " +
+			"Offer to work them out if they ask, with set_state and a rate. " + outlook), nil
 	}
 	delta, ok := dailyDelta(row)
 	if !ok {
@@ -582,6 +586,9 @@ func (a *Agent) planStatus(ctx context.Context, q *store.Queries, user store.Use
 		history = append(history, fmt.Sprintf("%s: %s cal, %s", shortDate(c.LocalDate), commas(int(c.Calories)), c.Detail))
 	}
 	b.WriteString(" Target history, newest first: " + strings.Join(history, "; ") + ".")
+	if outlook != "" {
+		b.WriteString(" " + outlook)
+	}
 	return b.String(), nil
 }
 

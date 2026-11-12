@@ -316,7 +316,8 @@ func (a *Agent) stateSection(ctx context.Context, user store.User) (string, erro
 		"alternative it gives. Height, age, sex, and activity are saved with set_profile, and targets follow. If the user " +
 		"mentions pregnancy, an eating disorder, or a medical condition, don't change their targets and suggest they ask a " +
 		"doctor. Tier manual means the user sets their own goals: never suggest or change a calorie goal for them unless they " +
-		"ask. Answer \"am I on track\", \"how much should I have lost\", and \"why did my target change\" from get_plan, and \"how " +
+		"ask. Answer \"am I on track\", \"how much should I have lost\", \"when will I reach my goal weight\", and \"why did my " +
+		"target change\" from get_plan, and \"how " +
 		"much is left\" or \"how much for dinner\" from get_day.\n")
 	return b.String(), nil
 }

@@ -370,3 +370,49 @@ func TestWeeklyReviewBulk(t *testing.T) {
 		t.Errorf("due for a manual user = %v", got)
 	}
 }
+
+// TestTargetReached follows a light cut to its target weight: get_plan
+// gives the dates, the summary the outlook, and the Monday review once the
+// average reaches the target says so and changes nothing.
+func TestTargetReached(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Toronto")
+	week1 := time.Date(2026, 9, 7, 12, 0, 0, 0, loc)
+	week := func(n int) time.Time { return week1.AddDate(0, 0, 7*(n-1)) }
+	s := sim.New(t, week1)
+	planned(t, s, `"light"`)
+	one(t, s, "target 173", "set_goals", `{"goals":[{"metric":"weight","value":173,"unit":"lbs"}]}`, "")
+
+	weekOf(t, s, week(1), 175, 2480)
+	weekOf(t, s, week(2), 174.4, 2480)
+	// Mon Sep 21: 1.4 lbs at 0.5 a week is 20 days; at the 0.3 a week since
+	// Sep 7's 175, 33 days.
+	s.Set(week(3))
+	one(t, s, "when will I get there", "get_plan", `{}`,
+		"Target weight outlook: target weight 173 lbs, 7-day average 174.4 lbs; at the planned -0.5 lbs a week, reached around Oct 11 "+
+			"(about 3 weeks); at the last 2 weeks' pace of -0.3 lbs a week, around Oct 24 (about 5 weeks).")
+	sum, err := s.Agent.CheckinText(s.Ctx, s.UserID, time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC), "weekly_summary", "")
+	if err != nil || !strings.Contains(sum, "\nAt your planned 0.5 lbs a week, you'd reach 173 lbs around Oct 10") {
+		t.Errorf("summary = %q, %v", sum, err)
+	}
+
+	weekOf(t, s, week(3), 173.6, 2480)
+	if got := reviewOn(t, s, week(4)); got != "" {
+		t.Errorf("on track = %q", got)
+	}
+	weekOf(t, s, week(4), 172.8, 2480)
+	want := "You've reached your 173 lbs target: your average weight last week was 172.8 lbs. Want to hold it there? " +
+		`Reply "maintain" and I'll set your calories to maintenance, or tell me a new target.`
+	if got := reviewOn(t, s, week(5)); got != want {
+		t.Errorf("reached = %q\nwant %q", got, want)
+	}
+	if got := reviewOn(t, s, week(5)); got != want {
+		t.Errorf("rerun = %q", got)
+	}
+	if got := s.Rows(`SELECT outcome FROM target_reviews ORDER BY week_start DESC LIMIT 1`); fmt.Sprint(got) != "[reached]" {
+		t.Errorf("outcome = %v", got)
+	}
+	if got := s.Rows(`SELECT count(*) FROM target_changes WHERE reason = 'review'`); fmt.Sprint(got) != "[0]" {
+		t.Errorf("review changes = %v", got)
+	}
+	one(t, s, "am I done", "get_plan", `{}`, "target weight 173 lbs, 7-day average 172.8 lbs; reached. Suggest maintain to hold it, or a new target.")
+}

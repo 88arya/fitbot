@@ -300,7 +300,7 @@ var tools = []tool{
 		spec: llm.Tool{
 			Name: "get_plan",
 			Description: "Look up the user's plan: state and rate, targets and how they were worked out, weight against what was " +
-				"planned by now, the latest weekly review, and why targets changed.",
+				"planned by now, the latest weekly review, why targets changed, and when they'd reach their target weight.",
 			Parameters: object(map[string]any{}),
 		},
 		run: handle((*Agent).getPlan),

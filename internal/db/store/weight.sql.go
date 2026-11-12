@@ -11,6 +11,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const firstWeightSince = `-- name: FirstWeightSince :one
+SELECT id, user_id, action_id, message_id, local_date, grams, logged_at, deleted_at, created_at, updated_at FROM weight_logs
+WHERE user_id = $1 AND local_date >= $2 AND deleted_at IS NULL
+ORDER BY local_date, logged_at, id
+LIMIT 1
+`
+
+type FirstWeightSinceParams struct {
+	UserID int64       `json:"user_id"`
+	First  pgtype.Date `json:"first"`
+}
+
+// The first weigh-in on or after local day first.
+func (q *Queries) FirstWeightSince(ctx context.Context, arg FirstWeightSinceParams) (WeightLog, error) {
+	row := q.db.QueryRow(ctx, firstWeightSince, arg.UserID, arg.First)
+	var i WeightLog
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ActionID,
+		&i.MessageID,
+		&i.LocalDate,
+		&i.Grams,
+		&i.LoggedAt,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWeight = `-- name: GetWeight :one
 SELECT id, user_id, action_id, message_id, local_date, grams, logged_at, deleted_at, created_at, updated_at FROM weight_logs
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL

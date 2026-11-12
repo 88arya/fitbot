@@ -86,6 +86,11 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 		return "", err
 	}
 	lines = append(lines, weeklyWeight(w))
+	if o, ok, err := loadOutlook(ctx, q, user.ID, sp.last); err != nil {
+		return "", err
+	} else if ok {
+		lines = append(lines, o.forUser(sp.last))
+	}
 
 	var shown []string
 	for _, line := range lines {
