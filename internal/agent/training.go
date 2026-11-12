@@ -43,6 +43,8 @@ type training struct {
 	// can pause a rotation in force in the range.
 	plans map[string]store.SessionPlan
 	moves []store.SessionPlan
+	// pauses are the user's breaks in the range.
+	pauses pauseSet
 }
 
 // loadTraining loads what working out the plan for first to last needs.
@@ -75,6 +77,9 @@ func loadTraining(ctx context.Context, q *store.Queries, userID int64, first, la
 	}
 	for _, p := range plans {
 		t.plans[dateKey(p.LocalDate)] = p
+	}
+	if t.pauses, err = loadPauses(ctx, q, userID, first, last); err != nil {
+		return nil, err
 	}
 	t.moves, err = q.MovesBefore(ctx, store.MovesBeforeParams{UserID: userID, Day: addDays(last, 1), Since: t.schedules[0].StartDate})
 	if err != nil {
@@ -126,7 +131,10 @@ type dayPlan struct {
 	// pausedUntil is set on a day a rotation waits through for a session
 	// moved to that day.
 	pausedUntil pgtype.Date
-	at          pgtype.Time
+	// pause is the user's break covering the day, if any, which plans
+	// nothing on it.
+	pause *store.Pause
+	at    pgtype.Time
 }
 
 // all is every session planned on the day.
@@ -142,6 +150,10 @@ func (t *training) on(d pgtype.Date) dayPlan {
 	p := dayPlan{sched: t.scheduleOn(d), pos: -1}
 	s := p.sched
 	if s == nil || !s.Kind.Valid {
+		return p
+	}
+	if pz, ok := t.pauses.on(d); ok {
+		p.pause = &pz
 		return p
 	}
 	slot := int(d.Time.Weekday())
@@ -187,6 +199,8 @@ func (p dayPlan) describe() string {
 	switch {
 	case p.sched == nil || !p.sched.Kind.Valid:
 		return "no schedule"
+	case p.pause != nil:
+		return "nothing, paused " + pauseText(*p.pause)
 	case p.pausedUntil.Valid:
 		return "nothing, the rotation waits for the session moved to " + dayName(p.pausedUntil)
 	}
@@ -696,7 +710,12 @@ func (a *Agent) planSession(ctx context.Context, c *call, args planArgs) (string
 		return "error: no training schedule; save one with set_schedule first", nil
 	}
 	p := t.on(day)
+	if pz, ok := t.pauses.on(to); args.Change == "move" && ok {
+		return fmt.Sprintf("error: %s is paused (%s), so nothing can move there", dayName(to), pauseText(pz)), nil
+	}
 	switch {
+	case p.pause != nil:
+		return fmt.Sprintf("error: %s is paused (%s), with nothing planned", dayName(day), pauseText(*p.pause)), nil
 	case args.Change == "clear":
 		if p.status == "" {
 			return "error: nothing is skipped or moved on " + dayName(day), nil

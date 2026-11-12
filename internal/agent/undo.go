@@ -46,6 +46,9 @@ const (
 	// A saved food: ID is the row save_food added and Prev the one it
 	// replaced or removed.
 	undoRestoreFood = "restore_food"
+	// A pause: ID is the one set_pause added, IDs the ones it removed, and
+	// Prev one it shortened, which ends on Day again.
+	undoRestorePause = "restore_pause"
 )
 
 // undoRecord is what reverses one action, stored with it as JSON. Op says
@@ -57,8 +60,9 @@ type undoRecord struct {
 	Desc string `json:"desc"`
 	// ID is the memory, logged amount, night, workout, supplement,
 	// supplement log, or weigh-in the action changed, and IDs the amounts
-	// log_intake or the logs log_supplement added. For a saved food, ID is
-	// the row the action added, and Prev a row it replaced or removed.
+	// log_intake or the logs log_supplement added. For a saved food or a
+	// pause, ID is the row the action added, and Prev a row it replaced,
+	// removed, or shortened.
 	ID      int64         `json:"id,omitempty"`
 	Prev    int64         `json:"prev,omitempty"`
 	IDs     []int64       `json:"ids,omitempty"`
@@ -430,6 +434,8 @@ func (a *Agent) applyUndo(ctx context.Context, q *store.Queries, userID int64, r
 		return q.SetBodyState(ctx, store.SetBodyStateParams{UserID: userID, State: *rec.Value, StartDate: day})
 	case undoRestoreFood:
 		return a.restoreFood(ctx, q, userID, rec)
+	case undoRestorePause:
+		return a.restorePause(ctx, q, userID, rec)
 	}
 	return fmt.Errorf("unknown undo op %q", rec.Op)
 }

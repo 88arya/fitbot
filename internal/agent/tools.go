@@ -184,6 +184,25 @@ var tools = []tool{
 	},
 	{
 		spec: llm.Tool{
+			Name: "set_pause",
+			Description: "Pause tracking for a break like a vacation, a sick week, or a deload: the days plan no sessions, aren't " +
+				"judged against goals, and don't break streaks. Or end a pause early when the user is back.",
+			Parameters: object(map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"set", "end"},
+					"description": "set starts or changes a pause; end ends the one covering first_date (or today) as of yesterday, " +
+						"or cancels it if it hasn't started."},
+				"first_date": map[string]any{"type": []string{"string", "null"},
+					"description": "The first paused local day, YYYY-MM-DD; null for today. For end, a day the pause covers, or null."},
+				"last_date": map[string]any{"type": []string{"string", "null"},
+					"description": "set only: the last paused day, YYYY-MM-DD, the day before they're back."},
+				"reason": map[string]any{"type": []string{"string", "null"},
+					"description": "set only: a word or two for it, like vacation or sick, if the user said."},
+			}),
+		},
+		run: handle((*Agent).setPause),
+	},
+	{
+		spec: llm.Tool{
 			Name: "log_sleep",
 			Description: "Log a night of sleep, using only what the user said. Give hours, or bedtime and wake_time, or all three; " +
 				"with only the two times, the hours are worked out from them. Never estimate.",

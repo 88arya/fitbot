@@ -131,6 +131,9 @@ type checkinDay struct {
 	logs  []store.SupplementLog
 	// doses are the day's due supplements that have a time, earliest first.
 	doses []doseGroup
+	// paused is true on a day in a break, when only supplement reminders
+	// go out.
+	paused bool
 }
 
 func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date) (*checkinDay, error) {
@@ -155,6 +158,11 @@ func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date
 		return nil, err
 	}
 	d.work = r.day(day)
+	pauses, err := loadPauses(ctx, q, user.ID, day, day)
+	if err != nil {
+		return nil, err
+	}
+	d.paused = len(pauses) > 0
 	// The day is judged as if it were still going, so a text that goes out
 	// just past midnight still asks about its own day.
 	planned, _ := d.work.outcomes(day)
@@ -178,6 +186,7 @@ func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date
 		if i < 0 {
 			g := doseGroup{at: at}
 			switch {
+			case d.paused:
 			case near(at, d.morning) && settings.on(settingMorning):
 				g.join = kindMorning
 			case near(at, d.night) && settings.on(settingNight):
@@ -279,6 +288,10 @@ func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]sch
 	u = d.user
 	v := c.a.settings()
 	var out []scheduler.Due
+	// A paused day gets only its supplement reminders.
+	if d.paused {
+		return append(out, c.a.supplementDues(d, u)...), nil
+	}
 	// The summary is listed first so it is planned, and sent, before the
 	// check-in, which a short reply then answers.
 	if weeklyDue(day) && v.on(settingWeekly) {
@@ -312,6 +325,17 @@ func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]sch
 			out = append(out, scheduler.Due{Kind: kindGymFollowup, Slot: slotName(at), At: f})
 		}
 	}
+	out = append(out, c.a.supplementDues(d, u)...)
+	for i, at := range d.waterTimes(v.int(settingWater)) {
+		out = append(out, scheduler.Due{Kind: kindWater, Slot: strconv.Itoa(i + 1), At: at})
+	}
+	return out, nil
+}
+
+// supplementDues are the day's supplement reminders and re-pings.
+func (a *Agent) supplementDues(d *checkinDay, u store.User) []scheduler.Due {
+	v := a.settings()
+	var out []scheduler.Due
 	for _, g := range d.doses {
 		if len(d.pending(g)) == 0 || !v.on(settingSupplements) {
 			continue
@@ -319,14 +343,12 @@ func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]sch
 		if g.join == "" {
 			out = append(out, scheduler.Due{Kind: kindSupplements, Slot: slotName(g.at), At: g.at})
 		}
-		if r := v.duration(settingReping); r > 0 && later(g.at+r) {
+		// A re-ping must stay on the day and out of quiet hours.
+		if r := v.duration(settingReping); r > 0 && g.at+r < 24*time.Hour && !quiet(u, g.at+r) {
 			out = append(out, scheduler.Due{Kind: kindReping, Slot: slotName(g.at), At: g.at + r})
 		}
 	}
-	for i, at := range d.waterTimes(v.int(settingWater)) {
-		out = append(out, scheduler.Due{Kind: kindWater, Slot: strconv.Itoa(i + 1), At: at})
-	}
-	return out, nil
+	return out
 }
 
 func (c checkins) Text(ctx context.Context, u store.User, day pgtype.Date, kind, slot string) (scheduler.Text, error) {

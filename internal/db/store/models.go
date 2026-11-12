@@ -110,6 +110,17 @@ type Message struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Pause struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	FirstDate pgtype.Date        `json:"first_date"`
+	LastDate  pgtype.Date        `json:"last_date"`
+	Reason    pgtype.Text        `json:"reason"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SavedFood struct {
 	ID        int64              `json:"id"`
 	UserID    int64              `json:"user_id"`

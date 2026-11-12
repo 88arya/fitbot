@@ -35,6 +35,10 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 	if err != nil {
 		return "", err
 	}
+	paused, err := loadPauses(ctx, q, user.ID, sp.first, sp.last)
+	if err != nil {
+		return "", err
+	}
 	var lines []string
 	for _, name := range intakeMetrics {
 		m, _ := metricByName(name)
@@ -46,7 +50,7 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 		if err != nil {
 			return "", err
 		}
-		s := daily{m: m, values: map[string]int{}, goals: goals, states: states, noun: "day"}
+		s := daily{m: m, values: map[string]int{}, goals: goals, states: states, noun: "day", paused: paused}
 		for _, r := range rows {
 			s.values[dateKey(r.LocalDate)] = int(r.Total)
 		}
@@ -61,7 +65,7 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 		return "", err
 	}
 	m, _ := metricByName("sleep")
-	s := daily{m: m, values: map[string]int{}, goals: goals, noun: "night"}
+	s := daily{m: m, values: map[string]int{}, goals: goals, noun: "night", paused: paused}
 	for _, r := range sleep {
 		s.values[dateKey(r.LocalDate)] = int(r.Minutes)
 	}
@@ -108,7 +112,15 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 	if st.state != "" {
 		shown = append(shown, st.forUser())
 	}
-	return "Last week (" + sp.dates() + "):\n" + strings.Join(shown, "\n"), nil
+	head := "Last week (" + sp.dates() + "):"
+	var breaks []string
+	for _, p := range paused {
+		breaks = append(breaks, pauseText(p))
+	}
+	if len(breaks) > 0 {
+		head += "\nPaused " + strings.Join(breaks, ", ") + "; those days aren't counted."
+	}
+	return head + "\n" + strings.Join(shown, "\n"), nil
 }
 
 // weeklyLine is a daily metric over the week, like "Calories: 1,790 cal
@@ -119,7 +131,7 @@ func (a *Agent) weeklyLine(s daily, sp span) string {
 	t := tallyDays(s, sp)
 	goalDays := 0
 	for d := sp.first; !d.Time.After(sp.last.Time); d = addDays(d, 1) {
-		if goalOn(s.goals, d).Value.Valid {
+		if goalOn(s.goals, d).Value.Valid && !s.isPaused(d) {
 			goalDays++
 		}
 	}
@@ -131,7 +143,7 @@ func (a *Agent) weeklyLine(s daily, sp span) string {
 		return out + "nothing logged."
 	}
 	out += s.m.format(t.avg()) + " average"
-	if t.logged < sp.days() {
+	if t.logged < sp.days()-t.paused {
 		out += " over " + plural(t.logged, s.noun) + " logged"
 	}
 	if goalDays > 0 {

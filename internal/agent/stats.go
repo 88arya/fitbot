@@ -214,6 +214,15 @@ type daily struct {
 	partial bool
 	// when names the day a current streak runs through.
 	when func(pgtype.Date) string
+	// paused are the user's breaks, whose days aren't judged and don't
+	// break a streak.
+	paused pauseSet
+}
+
+// isPaused reports whether d is in a break.
+func (s daily) isPaused(d pgtype.Date) bool {
+	_, ok := s.paused.on(d)
+	return ok
 }
 
 // under reports whether d's goal is a limit to stay at or under.
@@ -237,6 +246,9 @@ func judge(s daily, d pgtype.Date) (logged, withGoal, on bool) {
 
 // tally is a daily metric over a span.
 type tally struct {
+	// paused counts the span's days in a break, which count for nothing
+	// else.
+	paused        int
 	logged, total int
 	// withGoal counts the days logged with a goal in force, and onGoal those
 	// on goal; best is the most days on goal in a row.
@@ -255,6 +267,10 @@ func tallyDays(s daily, sp span) tally {
 	var t tally
 	run := 0
 	for d := sp.first; !d.Time.After(sp.last.Time); d = addDays(d, 1) {
+		if s.isPaused(d) {
+			t.paused++
+			continue
+		}
 		if g := goalOn(s.goals, d); g.Value.Valid {
 			if !slices.Contains(t.goals, int(g.Value.Int32)) {
 				t.goals = append(t.goals, int(g.Value.Int32))
@@ -284,10 +300,14 @@ func tallyDays(s daily, sp span) tally {
 	return t
 }
 
-// streak counts the days on goal in a row ending on last.
+// streak counts the days on goal in a row ending on last. Paused days are
+// passed over.
 func streak(s daily, last pgtype.Date) int {
 	n := 0
-	for d := last; n < statsLookback; d = addDays(d, -1) {
+	for d, i := last, 0; i < statsLookback; d, i = addDays(d, -1), i+1 {
+		if s.isPaused(d) {
+			continue
+		}
 		if _, _, on := judge(s, d); !on {
 			break
 		}
@@ -317,6 +337,14 @@ func goalRule(m metric, t tally, noun string) string {
 // 1,850 cal average a day logged, 9,250 cal total, on goal (at least 1,800
 // cal) on 3 of the 5 days logged, best streak 2 days".
 func tallyText(s daily, t tally, days int, total bool) string {
+	if t.paused > 0 {
+		text := tallyText(s, tally{logged: t.logged, total: t.total, withGoal: t.withGoal, onGoal: t.onGoal, best: t.best,
+			goals: t.goals, atLeast: t.atLeast, atMost: t.atMost}, days-t.paused, total)
+		return text + fmt.Sprintf(" (%s paused, not counted)", plural(t.paused, s.noun))
+	}
+	if days == 0 {
+		return "nothing to count"
+	}
 	if t.logged == 0 {
 		return "nothing logged on " + plural(days, s.noun)
 	}
@@ -411,8 +439,12 @@ func (a *Agent) intakeStats(ctx context.Context, q *store.Queries, userID int64,
 	if err != nil {
 		return "", err
 	}
+	paused, err := loadPauses(ctx, q, userID, statsFrom(sp, today), today)
+	if err != nil {
+		return "", err
+	}
 	s := daily{m: m, values: map[string]int{}, goals: goals, states: states, noun: "day", partial: true,
-		when: func(d pgtype.Date) string { return dayWord(d, today) }}
+		when: func(d pgtype.Date) string { return dayWord(d, today) }, paused: paused}
 	for _, r := range rows {
 		s.values[dateKey(r.LocalDate)] = int(r.Total)
 	}
@@ -437,8 +469,12 @@ func (a *Agent) sleepStats(ctx context.Context, q *store.Queries, userID int64, 
 		return "", err
 	}
 	m, _ := metricByName("sleep")
+	paused, err := loadPauses(ctx, q, userID, statsFrom(sp, today), today)
+	if err != nil {
+		return "", err
+	}
 	s := daily{m: m, values: map[string]int{}, goals: goals, noun: "night",
-		when: func(d pgtype.Date) string { return nightWord(d, today) }}
+		when: func(d pgtype.Date) string { return nightWord(d, today) }, paused: paused}
 	for _, r := range rows {
 		s.values[dateKey(r.LocalDate)] = int(r.Minutes)
 	}
@@ -812,6 +848,13 @@ func (a *Agent) getDay(ctx context.Context, c *call, args dayArgs) (string, erro
 		head += " (yesterday)"
 	}
 	lines := []string{head}
+	paused, err := loadPauses(ctx, c.q, c.userID, day, day)
+	if err != nil {
+		return "", err
+	}
+	if p, ok := paused.on(day); ok {
+		lines = append(lines, "paused "+pauseText(p)+": this day isn't judged against goals and doesn't break streaks")
+	}
 
 	totals, err := a.dayTotals(ctx, c.q, user, day)
 	if err != nil {

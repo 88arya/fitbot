@@ -416,3 +416,29 @@ func TestTargetReached(t *testing.T) {
 	}
 	one(t, s, "am I done", "get_plan", `{}`, "target weight 173 lbs, 7-day average 172.8 lbs; reached. Suggest maintain to hold it, or a new target.")
 }
+
+// TestReviewPaused checks two slow weeks that would lower calories change
+// nothing when a pause falls in them.
+func TestReviewPaused(t *testing.T) {
+	loc, _ := time.LoadLocation("America/Toronto")
+	week1 := time.Date(2026, 9, 7, 12, 0, 0, 0, loc)
+	week := func(n int) time.Time { return week1.AddDate(0, 0, 7*(n-1)) }
+	s := sim.New(t, week1)
+	planned(t, s, `"moderate"`)
+	for i, avg := range []float64{175, 174.2, 173.4, 173.3, 173.2} {
+		weekOf(t, s, week(i+1), avg, 2230)
+	}
+	if _, err := s.Pool.Exec(s.Ctx, `INSERT INTO pauses (user_id, first_date, last_date, reason) VALUES ($1, '2026-10-06', '2026-10-07', 'sick')`,
+		s.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reviewOn(t, s, week(6)); got != "" {
+		t.Errorf("review = %q", got)
+	}
+	if got := s.Rows(`SELECT outcome FROM target_reviews WHERE week_start = '2026-10-05'`); fmt.Sprint(got) != "[held]" {
+		t.Errorf("outcome = %v", got)
+	}
+	if got := s.Rows(`SELECT count(*) FROM target_changes WHERE reason = 'review'`); fmt.Sprint(got) != "[0]" {
+		t.Errorf("review changes = %v", got)
+	}
+}

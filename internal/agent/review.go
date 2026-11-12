@@ -158,6 +158,15 @@ func (a *Agent) runReview(ctx context.Context, q *store.Queries, user store.User
 		}
 		return body, nil
 	}
+	// A break in either week means the weeks don't show what the targets do,
+	// so nothing changes and nothing is said.
+	paused, err := loadPauses(ctx, q, user.ID, addDays(week, -7), sunday)
+	if err != nil {
+		return "", err
+	}
+	if len(paused) > 0 {
+		return "", q.InsertTargetReview(ctx, store.InsertTargetReviewParams{UserID: user.ID, WeekStart: week, Outcome: "held"})
+	}
 	earlier, err := loadWeightTrend(ctx, q, user.ID, addDays(sunday, -7))
 	if err != nil {
 		return "", err

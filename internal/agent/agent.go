@@ -138,6 +138,10 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
+		pauses, err := a.pauseSection(ctx, state.user)
+		if err != nil {
+			return "", err
+		}
 		sleep, err := a.sleepSection(ctx, state.user)
 		if err != nil {
 			return "", err
@@ -166,7 +170,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 		if err != nil {
 			return "", err
 		}
-		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+foods+sleep+training+workouts+supplements+weight+body+settings)}
+		sys := llm.Message{Role: "system", Content: a.systemPrompt(state, memories, intake+foods+sleep+training+workouts+supplements+weight+body+pauses+settings)}
 
 		out, err := a.complete(ctx, in.ID, append([]llm.Message{sys}, convo...))
 		if err != nil {
