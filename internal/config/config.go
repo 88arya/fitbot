@@ -16,10 +16,9 @@ import (
 )
 
 type Config struct {
-	HTTPAddr      string
-	PublicBaseURL string
-	DatabaseURL   string
-	LogLevel      slog.Level
+	HTTPAddr    string
+	DatabaseURL string
+	LogLevel    slog.Level
 
 	DefaultTimezone *time.Location
 	AllowedSenders  []string
@@ -126,9 +125,8 @@ func FromEnv(get func(string) string) (*Config, error) {
 	}
 
 	c := &Config{
-		HTTPAddr:      env("HTTP_ADDR", ":8080"),
-		PublicBaseURL: env("PUBLIC_BASE_URL", ""),
-		DatabaseURL:   require("DATABASE_URL"),
+		HTTPAddr:    env("HTTP_ADDR", ":8080"),
+		DatabaseURL: require("DATABASE_URL"),
 	}
 
 	if err := c.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
