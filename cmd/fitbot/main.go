@@ -96,6 +96,14 @@ func run() error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	// Texts a crash or restart left without a reply are listed before the
+	// server takes webhooks, so a new text isn't answered twice.
+	if sms != nil {
+		if err := sms.Recover(ctx); err != nil {
+			slog.Error("recovering unanswered texts", "err", err)
+		}
+	}
+
 	errc := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "addr", cfg.HTTPAddr, "version", version)

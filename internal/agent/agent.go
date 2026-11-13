@@ -79,7 +79,7 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	if err := a.refreshSettings(ctx); err != nil {
 		return "", err
 	}
-	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen})
+	history, err := a.Store.RecentMessages(ctx, store.RecentMessagesParams{UserID: userID, Limit: historyLen, Through: in.ID})
 	if err != nil {
 		return "", fmt.Errorf("loading history: %w", err)
 	}
@@ -110,6 +110,9 @@ func (a *Agent) Reply(ctx context.Context, userID int64, in store.Message) (stri
 	var convo []llm.Message
 	for _, m := range history {
 		switch {
+		case m.Direction == "inbound" && m.Status == TextMissed:
+			// Left unanswered by a restart; the user was told to send it
+			// again.
 		case m.Direction == "inbound":
 			convo = append(convo, llm.Message{Role: "user", Content: m.Body})
 		case m.Status != "failed" && m.Status != "sending":
@@ -251,6 +254,43 @@ func (a *Agent) location(user store.User) *time.Location {
 		return time.UTC
 	}
 	return loc
+}
+
+// Statuses of an inbound text after received: answered once its reply is
+// sent, or missed when a restart left it unanswered too long to answer.
+const (
+	TextAnswered = "answered"
+	TextMissed   = "missed"
+)
+
+// MaxLate is the longest after a text arrives that it can still be
+// answered, when a restart left it unanswered.
+const MaxLate = 10 * time.Minute
+
+// Clock is the agent's current time.
+func (a *Agent) Clock() time.Time {
+	return a.now()
+}
+
+// Late reports whether a text that arrived at sent and was left unanswered
+// by a restart is too late to answer now: more than MaxLate ago, or on an
+// earlier local day for the user, when a reply would log it on the wrong
+// day.
+func (a *Agent) Late(ctx context.Context, userID int64, sent time.Time) (bool, error) {
+	if err := a.refreshSettings(ctx); err != nil {
+		return false, err
+	}
+	user, err := a.Store.GetUser(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	now := a.now()
+	if now.Sub(sent) > MaxLate {
+		return true, nil
+	}
+	loc := a.location(user)
+	y, m, d := sent.In(loc).Date()
+	return !a.localDate(user).Time.Equal(time.Date(y, m, d, 0, 0, 0, 0, time.UTC)), nil
 }
 
 // localDate is the user's current local day.

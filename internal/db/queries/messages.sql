@@ -28,11 +28,25 @@ SET status = $2,
 WHERE provider_id = $1;
 
 -- name: RecentMessages :many
--- The user's last messages, oldest first.
+-- The user's last messages up to the one with id through, oldest first, so
+-- a reply never sees a text sent after the one it answers.
 SELECT * FROM (
-    SELECT * FROM messages WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2
+    SELECT * FROM messages WHERE user_id = $1 AND id <= sqlc.arg(through) ORDER BY created_at DESC, id DESC LIMIT $2
 ) recent
 ORDER BY created_at, id;
+
+-- name: MarkInbound :exec
+-- Sets an inbound text's status: answered once its reply is sent, or
+-- missed.
+UPDATE messages SET status = $2, updated_at = now()
+WHERE id = $1 AND direction = 'inbound';
+
+-- name: UnansweredTexts :many
+-- Inbound texts from the given phones still waiting for a reply, oldest
+-- first.
+SELECT m.* FROM messages m JOIN users u ON u.id = m.user_id
+WHERE m.direction = 'inbound' AND m.status = 'received' AND u.phone = ANY(sqlc.arg(phones)::text[])
+ORDER BY m.id;
 
 -- name: InsertLLMCall :exec
 INSERT INTO llm_calls (message_id, model, input_tokens, output_tokens, latency_ms, cost_usd, error)

@@ -120,6 +120,23 @@ func (q *Queries) InsertOutbound(ctx context.Context, arg InsertOutboundParams) 
 	return i, err
 }
 
+const markInbound = `-- name: MarkInbound :exec
+UPDATE messages SET status = $2, updated_at = now()
+WHERE id = $1 AND direction = 'inbound'
+`
+
+type MarkInboundParams struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+}
+
+// Sets an inbound text's status: answered once its reply is sent, or
+// missed.
+func (q *Queries) MarkInbound(ctx context.Context, arg MarkInboundParams) error {
+	_, err := q.db.Exec(ctx, markInbound, arg.ID, arg.Status)
+	return err
+}
+
 const markOutboundFailed = `-- name: MarkOutboundFailed :exec
 UPDATE messages SET status = 'failed', updated_at = now()
 WHERE id = $1
@@ -147,19 +164,60 @@ func (q *Queries) MarkOutboundSent(ctx context.Context, arg MarkOutboundSentPara
 
 const recentMessages = `-- name: RecentMessages :many
 SELECT id, user_id, direction, body, provider_id, status, parts, cost_usd, created_at, updated_at FROM (
-    SELECT id, user_id, direction, body, provider_id, status, parts, cost_usd, created_at, updated_at FROM messages WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2
+    SELECT id, user_id, direction, body, provider_id, status, parts, cost_usd, created_at, updated_at FROM messages WHERE user_id = $1 AND id <= $3 ORDER BY created_at DESC, id DESC LIMIT $2
 ) recent
 ORDER BY created_at, id
 `
 
 type RecentMessagesParams struct {
-	UserID int64 `json:"user_id"`
-	Limit  int32 `json:"limit"`
+	UserID  int64 `json:"user_id"`
+	Limit   int32 `json:"limit"`
+	Through int64 `json:"through"`
 }
 
-// The user's last messages, oldest first.
+// The user's last messages up to the one with id through, oldest first, so
+// a reply never sees a text sent after the one it answers.
 func (q *Queries) RecentMessages(ctx context.Context, arg RecentMessagesParams) ([]Message, error) {
-	rows, err := q.db.Query(ctx, recentMessages, arg.UserID, arg.Limit)
+	rows, err := q.db.Query(ctx, recentMessages, arg.UserID, arg.Limit, arg.Through)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Direction,
+			&i.Body,
+			&i.ProviderID,
+			&i.Status,
+			&i.Parts,
+			&i.CostUsd,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unansweredTexts = `-- name: UnansweredTexts :many
+SELECT m.id, m.user_id, m.direction, m.body, m.provider_id, m.status, m.parts, m.cost_usd, m.created_at, m.updated_at FROM messages m JOIN users u ON u.id = m.user_id
+WHERE m.direction = 'inbound' AND m.status = 'received' AND u.phone = ANY($1::text[])
+ORDER BY m.id
+`
+
+// Inbound texts from the given phones still waiting for a reply, oldest
+// first.
+func (q *Queries) UnansweredTexts(ctx context.Context, phones []string) ([]Message, error) {
+	rows, err := q.db.Query(ctx, unansweredTexts, phones)
 	if err != nil {
 		return nil, err
 	}

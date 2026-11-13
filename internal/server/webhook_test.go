@@ -153,13 +153,14 @@ func (h *harness) text(id, body string) int {
 	}})
 }
 
-// waitSends waits until Fitbot has sent n texts and marked them sent. A text
-// reaches the fake Telnyx before it is marked, and tests read messages' rows.
+// waitSends waits until Fitbot has sent n texts, marked them sent, and
+// marked the texts they answer. A text reaches the fake Telnyx before it is
+// marked, and tests read messages' rows.
 func (h *harness) waitSends(n int) []string {
 	h.t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if s := h.fakes.sent(); len(s) >= n && h.sending() == 0 {
+		if s := h.fakes.sent(); len(s) >= n && h.sending() == 0 && h.waiting() == 0 {
 			return s
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -175,6 +176,18 @@ func (h *harness) sending() int {
 	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM messages m
 		JOIN users u ON u.id = m.user_id
 		WHERE u.phone = $1 AND m.direction = 'outbound' AND m.status = 'sending'`, h.phone).Scan(&n); err != nil {
+		h.t.Fatal(err)
+	}
+	return n
+}
+
+// waiting counts texts from the test's number still waiting for a reply.
+func (h *harness) waiting() int {
+	h.t.Helper()
+	var n int
+	if err := h.pool.QueryRow(context.Background(), `SELECT count(*) FROM messages m
+		JOIN users u ON u.id = m.user_id
+		WHERE u.phone = $1 AND m.direction = 'inbound' AND m.status = 'received'`, h.phone).Scan(&n); err != nil {
 		h.t.Fatal(err)
 	}
 	return n
@@ -248,7 +261,7 @@ func TestWebhookConversation(t *testing.T) {
 		}
 		got = append(got, dir+"/"+status+"/"+c)
 	}
-	want := "[inbound/received/0.002500 outbound/delivered/0.009800 inbound/received/0.002500 outbound/queued/-]"
+	want := "[inbound/answered/0.002500 outbound/delivered/0.009800 inbound/answered/0.002500 outbound/queued/-]"
 	if fmt.Sprint(got) != want {
 		t.Errorf("messages =\n %v\nwant\n %v", got, want)
 	}

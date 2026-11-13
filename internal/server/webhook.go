@@ -3,13 +3,16 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/88arya/fitbot/internal/agent"
 	"github.com/88arya/fitbot/internal/db"
@@ -30,6 +33,10 @@ type SMS struct {
 	AllowedSenders []string
 
 	replies sync.WaitGroup
+	// mu guards recovering, which holds a channel for each user whose
+	// unanswered texts Recover is still answering, closed when done.
+	mu         sync.Mutex
+	recovering map[int64]chan struct{}
 }
 
 func (s *SMS) handleTelnyx(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +110,10 @@ func (s *SMS) handleInbound(w http.ResponseWriter, r *http.Request, e telnyx.Eve
 	}
 	slog.Info("text received", "id", e.ID, "from", e.From, "message_id", msg.ID)
 
-	s.replies.Go(func() { s.reply(context.WithoutCancel(ctx), user, msg) })
+	s.replies.Go(func() {
+		s.waitRecovery(user.ID)
+		s.reply(context.WithoutCancel(ctx), user, msg)
+	})
 }
 
 // WaitReplies waits for replies in progress and reports whether they all
@@ -177,6 +187,170 @@ func (s *SMS) reply(ctx context.Context, user store.User, in store.Message) {
 		}
 	}
 	s.send(ctx, user, text)
+	// Answered even if the send failed or the reply ran out of time: the
+	// agent's changes are made, and running it again after a restart would
+	// only send the same reply.
+	mark, cancel := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
+	defer cancel()
+	if err := s.Store.MarkInbound(mark, store.MarkInboundParams{ID: in.ID, Status: agent.TextAnswered}); err != nil {
+		slog.Error("marking text answered", "message_id", in.ID, "err", err)
+	}
+}
+
+// missedLen is how much of a missed text the notice quotes.
+const missedLen = 60
+
+// missedFor is how long after a text arrives a missed one is still worth
+// a notice; older ones are marked missed quietly.
+const missedFor = 24 * time.Hour
+
+// markTimeout bounds marking a text answered, which runs even after the
+// reply's own deadline.
+const markTimeout = 5 * time.Second
+
+// Recover answers texts left without a reply by a crash or a restart
+// mid-reply, since Telnyx won't send them again. It lists them now, so call
+// it before taking webhooks, and answers them in the background, each
+// user's in order and users in parallel, which WaitReplies waits for. A
+// new text from a user waits until their recovered texts are done, so
+// replies keep their order and "undo" reverses the right change. A text
+// too late to answer (see agent.Late) is marked missed instead, and the
+// user gets one notice quoting the last of theirs from the past day, so
+// they know to send it again. Tool calls are keyed on the message, so a
+// change the first run already made isn't made twice.
+func (s *SMS) Recover(ctx context.Context) error {
+	texts, err := s.Store.UnansweredTexts(ctx, s.AllowedSenders)
+	if err != nil {
+		return fmt.Errorf("listing unanswered texts: %w", err)
+	}
+	if len(texts) == 0 {
+		return nil
+	}
+	slog.Info("answering texts left unanswered", "count", len(texts))
+	byUser := map[int64][]store.Message{}
+	var users []int64
+	for _, m := range texts {
+		if byUser[m.UserID] == nil {
+			users = append(users, m.UserID)
+		}
+		byUser[m.UserID] = append(byUser[m.UserID], m)
+	}
+	ctx = context.WithoutCancel(ctx)
+	for _, id := range users {
+		// A second Recover for a user still recovering waits for the first.
+		wait := s.recovery(id)
+		done := make(chan struct{})
+		s.mu.Lock()
+		if s.recovering == nil {
+			s.recovering = map[int64]chan struct{}{}
+		}
+		s.recovering[id] = done
+		s.mu.Unlock()
+		s.replies.Go(func() {
+			defer s.recovered(id, done)
+			if wait != nil {
+				<-wait
+			}
+			s.recover(ctx, id, byUser[id])
+		})
+	}
+	return nil
+}
+
+// recovery is closed once the user's recovered texts are answered, or nil
+// when none are being answered.
+func (s *SMS) recovery(userID int64) chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recovering[userID]
+}
+
+// recovered ends a recovery for a user, letting their new texts through
+// unless a later one is still running.
+func (s *SMS) recovered(userID int64, done chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	close(done)
+	if s.recovering[userID] == done {
+		delete(s.recovering, userID)
+	}
+}
+
+// waitRecovery waits until the user's recovered texts are answered.
+func (s *SMS) waitRecovery(userID int64) {
+	if done := s.recovery(userID); done != nil {
+		<-done
+	}
+}
+
+// recover answers one user's unanswered texts, oldest first, after a
+// notice for any missed.
+func (s *SMS) recover(ctx context.Context, userID int64, texts []store.Message) {
+	user, err := s.Store.GetUser(ctx, userID)
+	if err != nil {
+		slog.Error("loading user", "user_id", userID, "err", err)
+		return
+	}
+	now := time.Now()
+	if s.Agent != nil {
+		now = s.Agent.Clock()
+	}
+	var missed, answer []store.Message
+	for _, m := range texts {
+		late := now.Sub(m.CreatedAt.Time) > agent.MaxLate
+		if s.Agent != nil {
+			if late, err = s.Agent.Late(ctx, m.UserID, m.CreatedAt.Time); err != nil {
+				slog.Error("checking unanswered text", "message_id", m.ID, "err", err)
+				continue
+			}
+		}
+		if !late {
+			answer = append(answer, m)
+			continue
+		}
+		if err := s.Store.MarkInbound(ctx, store.MarkInboundParams{ID: m.ID, Status: agent.TextMissed}); err != nil {
+			slog.Error("marking text missed", "message_id", m.ID, "err", err)
+			continue
+		}
+		slog.Warn("text missed", "message_id", m.ID)
+		if now.Sub(m.CreatedAt.Time) <= missedFor {
+			missed = append(missed, m)
+		}
+	}
+	if len(missed) > 0 {
+		s.send(ctx, user, missedText(missed))
+	}
+	for _, m := range answer {
+		slog.Info("answering text late", "message_id", m.ID)
+		s.reply(ctx, user, m)
+	}
+}
+
+// missedText tells the user texts were missed, quoting the last, like
+// `Sorry, I was offline and missed your text "drank 500ml". Send it again
+// if it still applies.`
+func missedText(texts []store.Message) string {
+	quote := strings.Join(strings.Fields(texts[len(texts)-1].Body), " ")
+	if r := []rune(quote); len(r) > missedLen {
+		// Cut at the last space that keeps it short, unless that loses most
+		// of it.
+		cut := string(r[:missedLen])
+		if i := strings.LastIndex(cut, " "); utf8.RuneCountInString(cut[:i+1]) > missedLen/2 {
+			cut = cut[:i]
+		}
+		quote = cut + "..."
+	}
+	switch {
+	case len(texts) == 1 && quote == "":
+		// A picture with no words.
+		return "Sorry, I was offline and missed a text you sent. Send it again if it still applies."
+	case len(texts) == 1:
+		return fmt.Sprintf("Sorry, I was offline and missed your text \"%s\". Send it again if it still applies.", quote)
+	case quote == "":
+		return fmt.Sprintf("Sorry, I was offline and missed %d of your texts. Send again anything that still applies.", len(texts))
+	}
+	return fmt.Sprintf("Sorry, I was offline and missed %d of your texts, the latest \"%s\". "+
+		"Send again anything that still applies.", len(texts), quote)
 }
 
 // Greet texts the intro to allowed senders Fitbot has never texted, so setup
