@@ -39,6 +39,7 @@ const (
 	settingGym         = "gym_reminders"
 	settingFollowups   = "gym_followups"
 	settingSupplements = "supplement_reminders"
+	settingBedtimeRem  = "bedtime_reminders"
 	settingWeekly      = "weekly_summary"
 	settingStateChange = "state_weekly_change"
 	settingReview      = "target_review"
@@ -72,6 +73,7 @@ var settingDefs = []settingDef{
 	{settingGym, "gym reminders", "on or off", parseToggle},
 	{settingFollowups, "gym follow-ups", "on or off", parseToggle},
 	{settingSupplements, "supplement reminders", "on or off; a re-ping needs these on", parseToggle},
+	{settingBedtimeRem, "bedtime reminders", "on or off; they go only when the usual bedtime is too late for the sleep goal", parseToggle},
 	{settingWeekly, "weekly summary", "on or off", parseToggle},
 	{settingStateChange, "state weekly change", "lbs a week beyond which a user counts as gaining or losing, 0.1 to 5", parseStateChange},
 	{settingReview, "weekly target review", "on or off; off stops automatic calorie changes", parseToggle},
@@ -245,6 +247,7 @@ func (a *Agent) defaults() settingValues {
 		settingGym:         "on",
 		settingFollowups:   "on",
 		settingSupplements: "on",
+		settingBedtimeRem:  "on",
 		settingWeekly:      "on",
 		settingStateChange: "0.5",
 		settingReview:      "on",

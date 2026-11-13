@@ -63,6 +63,7 @@ func TestEverySetting(t *testing.T) {
 		{"gym_reminders", "off", "off", "off", "maybe"},
 		{"gym_followups", "off", "off", "off", "maybe"},
 		{"supplement_reminders", "off", "off", "off", "maybe"},
+		{"bedtime_reminders", "off", "off", "off", "maybe"},
 		{"weekly_summary", "off", "off", "off", "maybe"},
 	} {
 		if result := updateSetting(s, c.key, c.bad); !strings.HasPrefix(result, "error: "+c.key) {

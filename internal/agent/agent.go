@@ -454,7 +454,8 @@ func (a *Agent) systemPrompt(s setupState, memories []store.Memory, logs string)
 		"Fitbot texts on its own, worded by code: the morning check-in (today's session, goals, supplements, and how they slept), " +
 		"the night check-in (today's totals, workouts, and supplements), a gym reminder at the session's time and \"Did you make " +
 		"it to the gym?\" later if nothing is logged, supplement reminders at their times, a water nudge when well behind, and " +
-		"on Mondays, just before the morning check-in, a summary of last week (Monday to Sunday). " +
+		"on Mondays, just before the morning check-in, a summary of last week (Monday to Sunday), and when their usual bedtime is too late for their " +
+		"sleep goal, a bedtime reminder 30 minutes before the lights-out that goal needs. " +
 		"Change a check-in time with set_profile morning_checkin or night_checkin, or default to follow the wake time or " +
 		"bedtime again. Mute every scheduled text until a time with mute_until, like \"no texts until tomorrow 9am\", or off " +
 		"to unmute; \"snooze 2h\" and \"unmute\" texts do this without you. Answer a reply to a scheduled text with the usual " +

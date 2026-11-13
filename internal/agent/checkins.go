@@ -33,6 +33,7 @@ const (
 	kindSupplements = "supplement_reminder"
 	kindReping      = "supplement_reping"
 	kindWater       = "water_nudge"
+	kindBedtime     = "bedtime_reminder"
 )
 
 const (
@@ -40,6 +41,8 @@ const (
 	// lastNight the latest it goes, for a bedtime after midnight.
 	nightLead = 30 * time.Minute
 	lastNight = 23*time.Hour + 30*time.Minute
+	// bedtimeLead is how long before lights-out the bedtime reminder goes.
+	bedtimeLead = 30 * time.Minute
 	// joinWindow is how close to a check-in a supplement can be due and be
 	// named in the check-in instead of a reminder of its own.
 	joinWindow = 30 * time.Minute
@@ -134,6 +137,11 @@ type checkinDay struct {
 	// paused is true on a day in a break, when only supplement reminders
 	// go out.
 	paused bool
+	// bedtime is when the bedtime reminder goes, if there is one, and
+	// bedtimeJoin is true when the night check-in carries it instead.
+	bedtime     time.Duration
+	hasBedtime  bool
+	bedtimeJoin bool
 }
 
 func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date) (*checkinDay, error) {
@@ -198,7 +206,53 @@ func (a *Agent) checkinDay(ctx context.Context, user store.User, day pgtype.Date
 		d.doses[i].plans = append(d.doses[i].plans, p)
 	}
 	slices.SortFunc(d.doses, func(a, b doseGroup) int { return int(a.at - b.at) })
+	if out, ok := d.lightsOut(); ok && settings.on(settingBedtimeRem) && !d.paused {
+		const day = 24 * time.Hour
+		at := (out - bedtimeLead + day) % day
+		// The night check-in carries it when it goes within joinWindow of the
+		// reminder and before lights-out, across midnight too. Otherwise it
+		// goes alone, but only before midnight: one past it would be planned
+		// with the next day's goal and pause, like a follow-up, so it isn't
+		// sent.
+		before := (out - d.night + day) % day
+		switch {
+		case before > 0 && before <= bedtimeLead+joinWindow && settings.on(settingNight):
+			d.hasBedtime, d.bedtimeJoin = true, true
+		case at >= scheduler.WakeTime(user):
+			d.bedtime, d.hasBedtime = at, true
+		}
+	}
 	return d, nil
+}
+
+// lightsOut is the time, since midnight, the user must be asleep by to get
+// the day's sleep goal before their wake time; the night ends the next day,
+// but goals start today at the earliest, so the day's goal is that night's.
+// ok is false without a sleep goal, when their usual bedtime already leaves
+// enough time, since the night check-in goes before it anyway, or when
+// bedtime and wake time are the same, which leaves no night to go by. It
+// always falls between wake time and bedtime, so never in quiet hours.
+func (d *checkinDay) lightsOut() (time.Duration, bool) {
+	g := d.goals["sleep"]
+	if !g.Value.Valid {
+		return 0, false
+	}
+	const day = 24 * time.Hour
+	goal := time.Duration(g.Value.Int32) * time.Minute
+	wake, bed := scheduler.WakeTime(d.user), scheduler.Bedtime(d.user)
+	if gap := (wake - bed + day) % day; gap == 0 || goal <= gap {
+		return 0, false
+	}
+	return (wake - goal%day + day) % day, true
+}
+
+// bedtimeLine is the bedtime reminder, like "lights out by 10:00 PM for 8
+// hours of sleep before your 6:00 AM wake-up."
+func (d *checkinDay) bedtimeLine() string {
+	out, _ := d.lightsOut()
+	sleep, _ := metricByName("sleep")
+	return "lights out by " + clock(out, "3:04 PM") + " for " + sleep.format(int(d.goals["sleep"].Value.Int32)) +
+		" of sleep before your " + clock(scheduler.WakeTime(d.user), "3:04 PM") + " wake-up."
 }
 
 // doseTime is when a supplement is taken, as time since midnight: its
@@ -329,6 +383,9 @@ func (c checkins) Due(ctx context.Context, u store.User, day pgtype.Date) ([]sch
 	for i, at := range d.waterTimes(v.int(settingWater)) {
 		out = append(out, scheduler.Due{Kind: kindWater, Slot: strconv.Itoa(i + 1), At: at})
 	}
+	if d.hasBedtime && !d.bedtimeJoin {
+		out = append(out, scheduler.Due{Kind: kindBedtime, At: d.bedtime})
+	}
 	return out, nil
 }
 
@@ -392,6 +449,11 @@ func (c checkins) Text(ctx context.Context, u store.User, day pgtype.Date, kind,
 		return withAsks(lead+doseList(due)+". Reply done once you've taken "+itOrThem(len(due))+", or skip.", asksFor(due))
 	case kindWater:
 		return scheduler.Text{Body: c.a.waterText(d, slot)}, nil
+	case kindBedtime:
+		if !d.hasBedtime || d.bedtimeJoin {
+			return scheduler.Text{}, nil
+		}
+		return scheduler.Text{Body: "Bedtime soon: " + d.bedtimeLine()}, nil
 	case kindWeekly:
 		body, err := c.a.weeklyText(ctx, u, day)
 		return scheduler.Text{Body: body}, err
@@ -573,6 +635,9 @@ func (a *Agent) nightText(ctx context.Context, d *checkinDay) (scheduler.Text, e
 	if now := d.joined(kindNight); len(now) > 0 {
 		q.Supplements = asksFor(now).Supplements
 		parts = append(parts, "Reply done once you've taken "+joinAnd(q.Supplements)+", or skip.")
+	}
+	if d.bedtimeJoin {
+		parts = append(parts, upperFirst(d.bedtimeLine()))
 	}
 	if len(parts) == 0 {
 		return scheduler.Text{}, nil
