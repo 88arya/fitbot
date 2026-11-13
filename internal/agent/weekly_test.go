@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -112,8 +113,80 @@ func (q questions) wantWeekly(monday time.Time, metrics []dailyQ) string {
 			lines = append(lines, "Your "+showLbs(1750)+" target is below your average, but a bulk moves away from it.")
 		}
 	}
+	lines = append(lines, q.wantPatterns(last)...)
 	_, state := q.wantState("bulk", last)
 	return strings.Join(append(lines, state), "\n")
+}
+
+// wantPatterns are the summary's pattern lines for the 4 weeks ending on
+// last, worked out from hand-run SQL. The seeded month has no pauses.
+func (q questions) wantPatterns(last time.Time) []string {
+	q.t.Helper()
+	first := last.AddDate(0, 0, -27)
+	from, to := first.Format(time.DateOnly), last.Format(time.DateOnly)
+	var lines []string
+	var endDays, endSum, weekDays, weekSum int
+	if err := q.s.Pool.QueryRow(q.s.Ctx, `
+		WITH d AS (SELECT local_date, sum(amount)::int AS v FROM intake_logs
+			WHERE user_id = $1 AND metric = 'calories' AND deleted_at IS NULL AND local_date BETWEEN $2 AND $3
+			GROUP BY local_date)
+		SELECT count(*) FILTER (WHERE extract(isodow FROM local_date) >= 6),
+			coalesce(sum(v) FILTER (WHERE extract(isodow FROM local_date) >= 6), 0)::int,
+			count(*) FILTER (WHERE extract(isodow FROM local_date) < 6),
+			coalesce(sum(v) FILTER (WHERE extract(isodow FROM local_date) < 6), 0)::int
+		FROM d`, q.s.UserID, from, to).Scan(&endDays, &endSum, &weekDays, &weekSum); err != nil {
+		q.t.Fatal(err)
+	}
+	if endDays >= 4 && weekDays >= 10 {
+		endAvg := int(math.Round(float64(endSum) / float64(endDays)))
+		weekAvg := int(math.Round(float64(weekSum) / float64(weekDays)))
+		gap, more := endAvg-weekAvg, "more"
+		if gap < 0 {
+			gap, more = -gap, "less"
+		}
+		if gap >= 250 {
+			lines = append(lines, fmt.Sprintf("Pattern (last 4 weeks): weekend calories averaged %s, %s %s than weekdays (%s).",
+				agent.FormatAmount("calories", endAvg), agent.FormatAmount("calories", gap), more, agent.FormatAmount("calories", weekAvg)))
+		}
+	}
+	// Each day with planned sessions, its night logged, and a sleep goal,
+	// by whether the night met the goal.
+	rows, err := q.s.Pool.Query(q.s.Ctx, outcomes+`,
+		nights AS (
+			SELECT s.local_date AS day, s.minutes >= (SELECT g.value FROM goals g WHERE g.user_id = $1 AND g.metric = 'sleep'
+				AND g.start_date <= s.local_date ORDER BY g.start_date DESC LIMIT 1) AS good
+			FROM sleep_logs s WHERE s.user_id = $1 AND s.deleted_at IS NULL AND s.local_date BETWEEN $2::date AND $3::date)
+		SELECT n.good, count(DISTINCT o.day), count(*), count(*) FILTER (WHERE o.state = 'done')
+		FROM outcomes o JOIN nights n ON n.day = o.day
+		WHERE o.planned AND n.good IS NOT NULL
+		GROUP BY n.good`, q.s.UserID, from, to, q.today.Format(time.DateOnly))
+	if err != nil {
+		q.t.Fatal(err)
+	}
+	defer rows.Close()
+	type side struct{ days, planned, done int }
+	sides := map[bool]side{}
+	for rows.Next() {
+		var good bool
+		var s side
+		if err := rows.Scan(&good, &s.days, &s.planned, &s.done); err != nil {
+			q.t.Fatal(err)
+		}
+		sides[good] = s
+	}
+	if err := rows.Err(); err != nil {
+		q.t.Fatal(err)
+	}
+	g, s := sides[true], sides[false]
+	if g.days >= 3 && s.days >= 3 {
+		// At least 25 points apart, compared exactly: g.done/g.planned less
+		// s.done/s.planned against 1/4.
+		if (g.done*s.planned-s.done*g.planned)*4 >= g.planned*s.planned {
+			lines = append(lines, fmt.Sprintf("Pattern (last 4 weeks): after nights on your sleep goal you did %d of %s, "+
+				"after shorter nights %d of %d.", g.done, nounPlural(g.planned, "planned session"), s.done, s.planned))
+		}
+	}
+	return lines
 }
 
 // TestWeeklySummary checks the summary sent on each Monday of the seeded

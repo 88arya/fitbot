@@ -25,8 +25,8 @@ func weeklyDue(day pgtype.Date) bool {
 // weeklyText is the week before day: each intake metric's average and days
 // on goal, sleep the same way, workouts done against planned by session,
 // each supplement's doses taken, and the 7-day average weight against the
-// week before, then the state at the end of the week. It is empty when
-// there is nothing to report.
+// week before, then any patterns over the last few weeks, then the state
+// at the end of the week. It is empty when there is nothing to report.
 func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date) (string, error) {
 	q := a.Store
 	monday := weekStart(day)
@@ -105,6 +105,13 @@ func (a *Agent) weeklyText(ctx context.Context, user store.User, day pgtype.Date
 	if len(shown) == 0 {
 		return "", nil
 	}
+	// Patterns come after the week's lines, so they alone never send a
+	// summary.
+	patterns, err := a.weeklyPatterns(ctx, q, user.ID, sp, day)
+	if err != nil {
+		return "", err
+	}
+	shown = append(shown, patterns...)
 	st, err := a.loadStateTrend(ctx, q, user.ID, sp.last, day)
 	if err != nil {
 		return "", err
